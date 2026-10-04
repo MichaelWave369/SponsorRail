@@ -10,6 +10,52 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.6 — signed compute-provider attestation
+
+v0.6 connects SponsorRail's accounting plane to a distinct compute-provider plane.
+
+A trusted provider signs a usage receipt after executing a grant. SponsorRail verifies that receipt before settling sponsor credits.
+
+```text
+Sponsor
+   |
+   | funds credits
+   v
+SponsorRail Broker
+   |
+   | opaque grant
+   v
+Compute Provider
+   |
+   | signed usage receipt
+   v
+SponsorRail Verification
+   |
+   | verified units only
+   v
+Settlement + SponsorRail receipt
+```
+
+### Provider invariants
+
+- provider usage is signed with Ed25519
+- provider identity must be registered by the operator
+- usage receipts are bound to the exact grant ID and compute ceiling
+- a provider cannot claim more units than the grant authorizes
+- SponsorRail settles from verified provider usage, not arbitrary result metadata
+- provider receipts omit prompt, repository context, source, and model output
+- sponsor identity is not passed into the provider execution envelope
+
+### Privacy boundary: sponsor vs provider
+
+The sponsor and compute provider are different actors.
+
+A sponsor never receives the prompt, source, or model output through SponsorRail.
+
+A compute provider may receive the execution context because it may need that context to perform inference. Local or confidential providers can reduce that disclosure, but SponsorRail does not pretend a remote model can compute on a prompt it never receives.
+
+That distinction is recorded explicitly in the SponsorRail receipt.
+
 ## v0.5 — transactional SQLite concurrency
 
 v0.5 adds a second backend for workloads that need real multi-connection accounting guarantees while preserving the existing JSON reference backend.
@@ -137,6 +183,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Durable grants](docs/durable-grants.md)
 - [Live settlement](docs/live-settlement.md)
 - [SQLite backend](docs/sqlite-backend.md)
+- [Compute providers](docs/providers.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -151,7 +198,7 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
 - heartbeats are caller-driven; there is no worker heartbeat daemon
 - receipt journaling is append-only at the application level, not WORM storage
-- settlement records are durable but not yet backed by a transactional database
+- JSON settlement records remain single-process; the SQLite backend provides transactional settlement and receipt sequencing
 - production key rotation, provider settlement, fraud resistance, and hardware-backed attestation remain future work
 
 ## License
