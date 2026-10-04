@@ -286,10 +286,10 @@ export class SqliteFundingBroker {
       );
 
     this.#db.exec(
-      `PRAGMA foreign_keys = ON;
+      `PRAGMA busy_timeout = ${busyTimeoutMs};
+PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA busy_timeout = ${busyTimeoutMs};`
+PRAGMA synchronous = NORMAL;`
     );
 
     this.#initialize();
