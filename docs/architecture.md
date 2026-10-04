@@ -1,105 +1,79 @@
 # Architecture
 
-SponsorRail separates funding, execution, accounting, recovery, and receipt concerns so that money can provide compute without becoming authority over agent cognition.
+SponsorRail separates funding, execution, accounting, liveness, and evidence so that money can provide compute without becoming authority over agent cognition.
 
 ```text
 User task
    |
    v
-Task Gateway
-   | private task -----------------------------------.
-   |                                                 |
-   v                                                 v
-Funding Sanitizer                              Agent Runtime
-   | coarse metadata only                           ^
-   v                                                 |
-Policy Matcher                                      |
-   |                                                 |
-   v                                                 |
-Funding Broker                                      |
-   | reserve + durable grant                        |
-   v                                                 |
-Persistent State                                    |
-   | pools / grants / chain head                    |
-   v                                                 |
-Execution Gate -------------------------------------'
+Funding Sanitizer
    |
    v
-Meter actual use
+Policy Matcher
    |
    v
-Settle / refund
+Funding Broker
+   |
+   +---- durable grant / reservation ----+
+   |                                     |
+   | heartbeat                           v
+   |                              Persistent State
+   |                                     |
+   v                                     |
+Execution Gate --------------------------+
+   | private task
+   v
+Agent Runtime
+   | measured use
+   v
+Idempotent Settlement
    |
    v
-Hash-linked receipt
+Receipt preparation
+   |
+   v
+optional Ed25519 signature
+   |
+   v
+Append-only receipt journal
+   |
+   v
+Persistent chain head
 ```
 
 ## Funding plane
 
-The funding plane may know:
+The funding plane may know coarse task classification, compute amounts, sponsor disclosure, grant identifiers, reservation identifiers, lease times, and settlement records.
 
-- task ID
-- coarse task class
-- requested compute units
-- user's maximum direct cost
-- privacy mode
-- sponsor disclosure
-- grant and reservation identifiers
-- grant lease times
-
-It must not receive prompt text, source code, repository contents, model output, or user identity in blind mode.
-
-## Policy plane
-
-A pool can constrain funding using only permitted coarse fields:
-
-- eligible task classes
-- allowed privacy modes
-- maximum compute per grant
-
-Policy decisions never require model context.
-
-## Accounting plane
-
-SponsorRail distinguishes:
-
-- `availableCredits`
-- `reservedCredits`
-- `spentCredits`
-
-The invariant remains:
-
-```text
-available + reserved + spent = total funded credits
-```
-
-## Durable grant plane
-
-A successful authorization writes both the reservation and matching grant to persistent state. Grants carry issue and expiration times.
-
-On restart, a broker can reconstruct active grants and continue settlement.
-
-## Reconciliation plane
-
-Reconciliation detects:
-
-- stale grants with missing pools
-- stale grants with missing reservations
-- expired grants
-- orphan reservations
-
-Expired grants and expired orphan reservations are released. Unexpired orphan reservations are reported but retained to avoid reclaiming compute that may still correspond to live work.
-
-## Persistence plane
-
-`JsonPoolStore` v0.3 stores a versioned document containing pools, active grants, and receipt-chain head state. v0.2 pool-only documents are migrated in memory when read.
-
-The reference store is single-process. Cross-process locking and database transactions are not yet claimed.
+It does not need prompt text, source code, repository contents, or model output.
 
 ## Execution plane
 
-The execution plane receives the private model context plus an opaque broker grant ID and compute-unit limit. It does not receive sponsor identity, sponsor messaging, sponsor instructions, or sponsor targeting metadata.
+The execution plane receives private model context plus an opaque grant ID and authorized compute units. Sponsor identity and sponsor instructions remain excluded.
 
-## Receipt plane
+## Liveness plane
 
-v0.3 receipts are hash-linked. Each receipt commits to its payload, previous receipt hash, and sequence number. The broker persists chain head and sequence so receipt continuity survives normal restart without storing full private outputs.
+A grant lease prevents abandoned work from reserving sponsor credits indefinitely. v0.4 adds heartbeat renewal. A heartbeat can move the expiry forward but cannot increase the compute ceiling or alter task policy.
+
+## Settlement plane
+
+Settlement records are durable and keyed for idempotent replay. The broker also detects a previously settled grant even if a caller retries with a different key, preventing double-spend of sponsor credits.
+
+## Evidence plane
+
+Receipts are prepared against the current chain head, optionally signed, then committed.
+
+Commit order is:
+
+1. verify receipt hash and chain adjacency
+2. append receipt to journal
+3. advance in-memory chain head
+4. persist chain-head state
+
+If the journal append succeeds but state persistence lags, startup recovery can advance state from the valid journal tail.
+
+## Persistence plane
+
+The v0.4 JSON state contains pool snapshots, active durable grants, completed settlement records, and the receipt-chain head. A separate NDJSON file contains completed receipts.
+
+The reference implementation remains single-process and does not claim distributed transactions.
