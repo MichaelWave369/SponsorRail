@@ -8,7 +8,12 @@ export {
   executeSponsoredTask,
   sanitizeFundingRequest,
   signReceipt,
-  verifyReceipt
+  verifyReceipt,
+  verifyReceiptChain,
+  verifyReceiptHash
 } from "./sponsorrail.js";
 
-export { JsonPoolStore, POOL_STORE_SCHEMA } from "./store.js";
+export {
+  JsonPoolStore,
+  POOL_STORE_SCHEMA
+} from "./store.js";

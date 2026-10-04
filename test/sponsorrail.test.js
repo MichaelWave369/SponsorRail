@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  writeFileSync
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -14,7 +18,9 @@ import {
   evaluatePolicy,
   executeSponsoredTask,
   sanitizeFundingRequest,
-  verifyReceipt
+  verifyReceipt,
+  verifyReceiptChain,
+  verifyReceiptHash
 } from "../src/index.js";
 
 function makeTask(overrides = {}) {
@@ -40,58 +46,115 @@ function makePool(overrides = {}) {
   });
 }
 
+function makeStore() {
+  const dir = mkdtempSync(
+    join(tmpdir(), "sponsorrail-")
+  );
+
+  return new JsonPoolStore(
+    join(dir, "state.json")
+  );
+}
+
 test("funding request strips prompt and repository context", () => {
-  const request = sanitizeFundingRequest(makeTask());
+  const request =
+    sanitizeFundingRequest(
+      makeTask()
+    );
 
   assert.deepEqual(request, {
     taskId: "private-task",
-    taskClass: "software-development",
+    taskClass:
+      "software-development",
     computeRequested: 25,
     userMaxCost: 0,
     privacy: "blind"
   });
 
-  assert.equal(JSON.stringify(request).includes("Secret prompt"), false);
-  assert.equal(JSON.stringify(request).includes("SECRET_SOURCE_CODE"), false);
+  assert.equal(
+    JSON.stringify(request)
+      .includes("Secret prompt"),
+    false
+  );
+
+  assert.equal(
+    JSON.stringify(request)
+      .includes("SECRET_SOURCE_CODE"),
+    false
+  );
 });
 
 test("model context contains task data but no sponsor identity", () => {
-  const context = buildModelContext(makeTask());
+  const context =
+    buildModelContext(
+      makeTask()
+    );
 
-  assert.equal(context.prompt, "Secret prompt");
-  assert.equal(JSON.stringify(context).includes("ExampleCloud"), false);
-  assert.equal(JSON.stringify(context).includes("sponsor"), false);
+  assert.equal(
+    context.prompt,
+    "Secret prompt"
+  );
+
+  assert.equal(
+    JSON.stringify(context)
+      .includes("ExampleCloud"),
+    false
+  );
+
+  assert.equal(
+    JSON.stringify(context)
+      .includes("sponsor"),
+    false
+  );
 });
 
 test("execution authorization strips sponsor metadata", () => {
-  const auth = buildExecutionAuthorization({
-    grantId: "broker-minted",
-    computeUnits: 25,
-    sponsorDisclosure: "ExampleCloud",
-    sponsorInstructions: "Use our database"
-  });
+  const auth =
+    buildExecutionAuthorization({
+      grantId:
+        "broker-minted",
+      computeUnits: 25,
+      sponsorDisclosure:
+        "ExampleCloud",
+      sponsorInstructions:
+        "Use our database"
+    });
 
   assert.deepEqual(auth, {
-    grantId: "broker-minted",
+    grantId:
+      "broker-minted",
     computeUnits: 25
   });
 });
 
-test("policy matcher rejects task class, privacy mode, and oversized grants", () => {
+test("policy matcher rejects task class privacy mode and oversized grants", () => {
   const policy = {
-    eligibleTaskClasses: ["software-development"],
-    allowedPrivacyModes: ["blind"],
+    eligibleTaskClasses: [
+      "software-development"
+    ],
+    allowedPrivacyModes: [
+      "blind"
+    ],
     maxComputePerGrant: 50
   };
 
   assert.equal(
-    evaluatePolicy(sanitizeFundingRequest(makeTask()), policy).eligible,
+    evaluatePolicy(
+      sanitizeFundingRequest(
+        makeTask()
+      ),
+      policy
+    ).eligible,
     true
   );
 
   assert.equal(
     evaluatePolicy(
-      sanitizeFundingRequest(makeTask({ taskClass: "research" })),
+      sanitizeFundingRequest(
+        makeTask({
+          taskClass: "research"
+        })
+      ),
       policy
     ).reason,
     "TASK_CLASS_NOT_ELIGIBLE"
@@ -99,7 +162,11 @@ test("policy matcher rejects task class, privacy mode, and oversized grants", ()
 
   assert.equal(
     evaluatePolicy(
-      sanitizeFundingRequest(makeTask({ privacy: "contextual" })),
+      sanitizeFundingRequest(
+        makeTask({
+          privacy: "contextual"
+        })
+      ),
       policy
     ).reason,
     "PRIVACY_MODE_NOT_ELIGIBLE"
@@ -107,7 +174,11 @@ test("policy matcher rejects task class, privacy mode, and oversized grants", ()
 
   assert.equal(
     evaluatePolicy(
-      sanitizeFundingRequest(makeTask({ computeRequested: 51 })),
+      sanitizeFundingRequest(
+        makeTask({
+          computeRequested: 51
+        })
+      ),
       policy
     ).reason,
     "GRANT_LIMIT_EXCEEDED"
@@ -116,39 +187,107 @@ test("policy matcher rejects task class, privacy mode, and oversized grants", ()
 
 test("authorization reserves credits without spending them", () => {
   const pool = makePool();
-  const broker = new FundingBroker([pool]);
 
-  const grant = broker.authorize(makeTask());
+  const broker =
+    new FundingBroker(
+      [pool],
+      {
+        now: () => 1000
+      }
+    );
 
-  assert.equal(grant.funded, true);
-  assert.equal(pool.availableCredits, 75);
-  assert.equal(pool.reservedCredits, 25);
-  assert.equal(pool.spentCredits, 0);
-  assert.equal(pool.totalCredits, 100);
+  const grant =
+    broker.authorize(
+      makeTask()
+    );
+
+  assert.equal(
+    grant.funded,
+    true
+  );
+
+  assert.equal(
+    grant.issuedAt,
+    "1970-01-01T00:00:01.000Z"
+  );
+
+  assert.equal(
+    pool.availableCredits,
+    75
+  );
+
+  assert.equal(
+    pool.reservedCredits,
+    25
+  );
+
+  assert.equal(
+    pool.spentCredits,
+    0
+  );
+
+  assert.equal(
+    pool.totalCredits,
+    100
+  );
 });
 
 test("settlement spends actual usage and refunds unused reservation", () => {
   const pool = makePool();
-  const broker = new FundingBroker([pool]);
 
-  const grant = broker.authorize(makeTask());
-  const settlement = broker.settle(grant, 17);
+  const broker =
+    new FundingBroker(
+      [pool]
+    );
 
-  assert.deepEqual(settlement, {
-    reservedUnits: 25,
-    usedUnits: 17,
-    refundUnits: 8
-  });
+  const grant =
+    broker.authorize(
+      makeTask()
+    );
 
-  assert.equal(pool.availableCredits, 83);
-  assert.equal(pool.reservedCredits, 0);
-  assert.equal(pool.spentCredits, 17);
-  assert.equal(pool.totalCredits, 100);
+  const settlement =
+    broker.settle(
+      grant,
+      17
+    );
+
+  assert.deepEqual(
+    settlement,
+    {
+      reservedUnits: 25,
+      usedUnits: 17,
+      refundUnits: 8
+    }
+  );
+
+  assert.equal(
+    pool.availableCredits,
+    83
+  );
+
+  assert.equal(
+    pool.reservedCredits,
+    0
+  );
+
+  assert.equal(
+    pool.spentCredits,
+    17
+  );
+
+  assert.equal(
+    pool.totalCredits,
+    100
+  );
 });
 
 test("failed execution releases the full reservation", async () => {
   const pool = makePool();
-  const broker = new FundingBroker([pool]);
+
+  const broker =
+    new FundingBroker(
+      [pool]
+    );
 
   await assert.rejects(
     () =>
@@ -156,20 +295,37 @@ test("failed execution releases the full reservation", async () => {
         task: makeTask(),
         broker,
         runner: async () => {
-          throw new Error("agent crashed");
+          throw new Error(
+            "agent crashed"
+          );
         }
       }),
     /agent crashed/
   );
 
-  assert.equal(pool.availableCredits, 100);
-  assert.equal(pool.reservedCredits, 0);
-  assert.equal(pool.spentCredits, 0);
+  assert.equal(
+    pool.availableCredits,
+    100
+  );
+
+  assert.equal(
+    pool.reservedCredits,
+    0
+  );
+
+  assert.equal(
+    pool.spentCredits,
+    0
+  );
 });
 
 test("invalid over-reporting releases reservation rather than charging sponsor", async () => {
   const pool = makePool();
-  const broker = new FundingBroker([pool]);
+
+  const broker =
+    new FundingBroker(
+      [pool]
+    );
 
   await assert.rejects(
     () =>
@@ -184,146 +340,580 @@ test("invalid over-reporting releases reservation rather than charging sponsor",
     /invalid compute usage/
   );
 
-  assert.equal(pool.availableCredits, 100);
-  assert.equal(pool.spentCredits, 0);
+  assert.equal(
+    pool.availableCredits,
+    100
+  );
+
+  assert.equal(
+    pool.spentCredits,
+    0
+  );
 });
 
 test("user can decline sponsorship", () => {
   const pool = makePool();
-  const broker = new FundingBroker([pool]);
 
-  const grant = broker.authorize(
-    makeTask({ allowSponsorship: false })
-  );
+  const broker =
+    new FundingBroker(
+      [pool]
+    );
 
-  assert.deepEqual(grant, {
-    funded: false,
-    reason: "SPONSORSHIP_DECLINED"
-  });
+  const grant =
+    broker.authorize(
+      makeTask({
+        allowSponsorship:
+          false
+      })
+    );
 
-  assert.equal(pool.balanceCredits, 100);
-});
-
-test("sponsored execution emits v0.2 receipt with settlement evidence", async () => {
-  const pool = makePool();
-  const broker = new FundingBroker([pool]);
-  const keys = createReceiptKeyPair();
-
-  let observedExecutionEnvelope;
-
-  const execution = await executeSponsoredTask({
-    task: makeTask(),
-    broker,
-    receiptPrivateKey: keys.privateKey,
-    runner: async (envelope) => {
-      observedExecutionEnvelope = envelope;
-
-      return {
-        completed: true,
-        computeUnitsUsed: 17,
-        output: "private result"
-      };
+  assert.deepEqual(
+    grant,
+    {
+      funded: false,
+      reason:
+        "SPONSORSHIP_DECLINED"
     }
-  });
-
-  assert.equal(
-    execution.receipt.schema,
-    "sponsorrail.receipt.v0.2"
-  );
-  assert.equal(pool.balanceCredits, 83);
-  assert.equal(execution.receipt.computeUnitsAuthorized, 25);
-  assert.equal(execution.receipt.computeUnitsUsed, 17);
-  assert.equal(execution.receipt.computeUnitsRefunded, 8);
-  assert.equal(execution.receipt.sponsorContributionCredits, 17);
-  assert.equal(
-    verifyReceipt(execution.receipt, keys.publicKey),
-    true
   );
 
-  const envelopeText = JSON.stringify(
-    observedExecutionEnvelope
-  );
   assert.equal(
-    envelopeText.includes("ExampleCloud"),
-    false
-  );
-  assert.equal(
-    envelopeText.includes("Use our database"),
-    false
-  );
-
-  const receiptText = JSON.stringify(execution.receipt);
-  assert.equal(
-    receiptText.includes("Secret prompt"),
-    false
-  );
-  assert.equal(
-    receiptText.includes("SECRET_SOURCE_CODE"),
-    false
-  );
-  assert.equal(
-    receiptText.includes("private result"),
-    false
+    pool.balanceCredits,
+    100
   );
 });
 
-test("pool snapshots persist only coarse reservation metadata and survive restart", () => {
-  const dir = mkdtempSync(
-    join(tmpdir(), "sponsorrail-")
+test("durable grant can settle after broker restart", () => {
+  const store = makeStore();
+  const clock = () => 1000;
+
+  const first =
+    new FundingBroker(
+      [makePool()],
+      {
+        store,
+        now: clock,
+        grantTtlMs: 1000
+      }
+    );
+
+  const grant =
+    first.authorize(
+      makeTask()
+    );
+
+  const restarted =
+    new FundingBroker(
+      [],
+      {
+        store,
+        now: clock,
+        grantTtlMs: 1000
+      }
+    );
+
+  const settlement =
+    restarted.settle(
+      grant,
+      10
+    );
+
+  assert.deepEqual(
+    settlement,
+    {
+      reservedUnits: 25,
+      usedUnits: 10,
+      refundUnits: 15
+    }
   );
-  const storePath = join(dir, "pools.json");
-  const store = new JsonPoolStore(storePath);
-
-  const pool = makePool({
-    eligibleTaskClasses: [
-      "software-development"
-    ],
-    maxComputePerGrant: 50
-  });
-
-  const broker = new FundingBroker(
-    [pool],
-    { store }
-  );
-
-  const grant = broker.authorize(makeTask());
-
-  const raw = readFileSync(storePath, "utf8");
 
   assert.equal(
-    raw.includes("Secret prompt"),
-    false
-  );
-  assert.equal(
-    raw.includes("SECRET_SOURCE_CODE"),
-    false
-  );
-  assert.equal(
-    raw.includes("private-task"),
-    true
+    restarted.pools[0]
+      .availableCredits,
+    90
   );
 
-  const restarted = new FundingBroker(
-    [],
-    { store }
+  assert.equal(
+    restarted.pools[0]
+      .reservedCredits,
+    0
   );
 
-  assert.equal(restarted.pools.length, 1);
   assert.equal(
-    restarted.pools[0].availableCredits,
-    75
+    restarted.pools[0]
+      .spentCredits,
+    10
   );
+});
+
+test("expired durable grants are released during reconciliation", () => {
+  const store = makeStore();
+
+  const first =
+    new FundingBroker(
+      [makePool()],
+      {
+        store,
+        now: () => 1000,
+        grantTtlMs: 100
+      }
+    );
+
+  const grant =
+    first.authorize(
+      makeTask()
+    );
+
+  const restarted =
+    new FundingBroker(
+      [],
+      {
+        store,
+        now: () => 1200,
+        grantTtlMs: 100
+      }
+    );
+
   assert.equal(
-    restarted.pools[0].reservedCredits,
-    25
-  );
-  assert.equal(
-    restarted.pools[0].totalCredits,
+    restarted.pools[0]
+      .availableCredits,
     100
   );
 
+  assert.equal(
+    restarted.pools[0]
+      .reservedCredits,
+    0
+  );
+
   assert.throws(
-    () => restarted.settle(grant, 10),
+    () =>
+      restarted.settle(
+        grant,
+        1
+      ),
     /unknown grant/
+  );
+});
+
+test("unexpired orphan reservations are reported but not released", () => {
+  const store = makeStore();
+
+  const first =
+    new FundingBroker(
+      [makePool()],
+      {
+        store,
+        now: () => 1000,
+        grantTtlMs: 1000
+      }
+    );
+
+  first.authorize(
+    makeTask()
+  );
+
+  const state =
+    store.loadState();
+
+  store.saveState({
+    ...state,
+    grants: []
+  });
+
+  const restarted =
+    new FundingBroker(
+      [],
+      {
+        store,
+        now: () => 1200,
+        grantTtlMs: 1000,
+        autoReconcile: false
+      }
+    );
+
+  const report =
+    restarted.reconcile();
+
+  assert.equal(
+    report.orphanReservations
+      .length,
+    1
+  );
+
+  assert.equal(
+    report.releasedOrphans
+      .length,
+    0
+  );
+
+  assert.equal(
+    restarted.pools[0]
+      .reservedCredits,
+    25
+  );
+});
+
+test("expired orphan reservations are released", () => {
+  const store = makeStore();
+
+  const first =
+    new FundingBroker(
+      [makePool()],
+      {
+        store,
+        now: () => 1000,
+        grantTtlMs: 100
+      }
+    );
+
+  first.authorize(
+    makeTask()
+  );
+
+  const state =
+    store.loadState();
+
+  store.saveState({
+    ...state,
+    grants: []
+  });
+
+  const restarted =
+    new FundingBroker(
+      [],
+      {
+        store,
+        now: () => 1200,
+        grantTtlMs: 100,
+        autoReconcile: false
+      }
+    );
+
+  const report =
+    restarted.reconcile();
+
+  assert.equal(
+    report.releasedOrphans
+      .length,
+    1
+  );
+
+  assert.equal(
+    restarted.pools[0]
+      .availableCredits,
+    100
+  );
+
+  assert.equal(
+    restarted.pools[0]
+      .reservedCredits,
+    0
+  );
+});
+
+test("persistent state contains only coarse grant and reservation metadata", () => {
+  const store = makeStore();
+
+  const broker =
+    new FundingBroker(
+      [makePool()],
+      {
+        store,
+        now: () => 1000
+      }
+    );
+
+  broker.authorize(
+    makeTask()
+  );
+
+  const raw =
+    readFileSync(
+      store.filePath,
+      "utf8"
+    );
+
+  assert.equal(
+    raw.includes(
+      "Secret prompt"
+    ),
+    false
+  );
+
+  assert.equal(
+    raw.includes(
+      "SECRET_SOURCE_CODE"
+    ),
+    false
+  );
+
+  assert.equal(
+    raw.includes(
+      "private-task"
+    ),
+    true
+  );
+
+  assert.equal(
+    raw.includes(
+      "ExampleCloud"
+    ),
+    true
+  );
+});
+
+test("v0.2 store documents migrate into v0.3 state", () => {
+  const store = makeStore();
+
+  writeFileSync(
+    store.filePath,
+    JSON.stringify({
+      schema:
+        "sponsorrail.pool-store.v0.2",
+      pools: [
+        makePool().snapshot()
+      ]
+    })
+  );
+
+  const state =
+    store.loadState();
+
+  assert.equal(
+    state.schema,
+    "sponsorrail.store.v0.3"
+  );
+
+  assert.deepEqual(
+    state.grants,
+    []
+  );
+
+  assert.deepEqual(
+    state.receiptChain,
+    {
+      sequence: 0,
+      headHash: null
+    }
+  );
+});
+
+test("receipts are hash-linked and signatures remain verifiable", async () => {
+  const pool = makePool({
+    balanceCredits: 200
+  });
+
+  const broker =
+    new FundingBroker(
+      [pool],
+      {
+        now: () => 1000
+      }
+    );
+
+  const keys =
+    createReceiptKeyPair();
+
+  const first =
+    await executeSponsoredTask({
+      task: makeTask({
+        id: "task-1"
+      }),
+      broker,
+      receiptPrivateKey:
+        keys.privateKey,
+      runner: async () => ({
+        completed: true,
+        computeUnitsUsed: 10
+      })
+    });
+
+  const second =
+    await executeSponsoredTask({
+      task: makeTask({
+        id: "task-2"
+      }),
+      broker,
+      receiptPrivateKey:
+        keys.privateKey,
+      runner: async () => ({
+        completed: true,
+        computeUnitsUsed: 11
+      })
+    });
+
+  assert.equal(
+    first.receipt.schema,
+    "sponsorrail.receipt.v0.3"
+  );
+
+  assert.equal(
+    first.receipt.chain
+      .sequence,
+    1
+  );
+
+  assert.equal(
+    first.receipt.chain
+      .previousReceiptHash,
+    null
+  );
+
+  assert.equal(
+    second.receipt.chain
+      .sequence,
+    2
+  );
+
+  assert.equal(
+    second.receipt.chain
+      .previousReceiptHash,
+    first.receipt.chain
+      .receiptHash
+  );
+
+  assert.equal(
+    verifyReceiptHash(
+      first.receipt
+    ),
+    true
+  );
+
+  assert.equal(
+    verifyReceiptHash(
+      second.receipt
+    ),
+    true
+  );
+
+  assert.equal(
+    verifyReceiptChain([
+      first.receipt,
+      second.receipt
+    ]),
+    true
+  );
+
+  assert.equal(
+    verifyReceipt(
+      first.receipt,
+      keys.publicKey
+    ),
+    true
+  );
+
+  assert.equal(
+    verifyReceipt(
+      second.receipt,
+      keys.publicKey
+    ),
+    true
+  );
+});
+
+test("receipt chain head survives restart", async () => {
+  const store = makeStore();
+  const keys =
+    createReceiptKeyPair();
+
+  const firstBroker =
+    new FundingBroker(
+      [makePool({
+        balanceCredits: 200
+      })],
+      {
+        store,
+        now: () => 1000
+      }
+    );
+
+  const first =
+    await executeSponsoredTask({
+      task: makeTask({
+        id: "task-1"
+      }),
+      broker: firstBroker,
+      receiptPrivateKey:
+        keys.privateKey,
+      runner: async () => ({
+        completed: true,
+        computeUnitsUsed: 10
+      })
+    });
+
+  const restarted =
+    new FundingBroker(
+      [],
+      {
+        store,
+        now: () => 1000
+      }
+    );
+
+  const second =
+    await executeSponsoredTask({
+      task: makeTask({
+        id: "task-2"
+      }),
+      broker: restarted,
+      receiptPrivateKey:
+        keys.privateKey,
+      runner: async () => ({
+        completed: true,
+        computeUnitsUsed: 10
+      })
+    });
+
+  assert.equal(
+    second.receipt.chain
+      .sequence,
+    2
+  );
+
+  assert.equal(
+    second.receipt.chain
+      .previousReceiptHash,
+    first.receipt.chain
+      .receiptHash
+  );
+
+  assert.deepEqual(
+    restarted
+      .receiptChainState(),
+    {
+      sequence: 2,
+      headHash:
+        second.receipt.chain
+          .receiptHash
+    }
+  );
+});
+
+test("tampering breaks receipt hash verification", async () => {
+  const broker =
+    new FundingBroker(
+      [makePool()]
+    );
+
+  const execution =
+    await executeSponsoredTask({
+      task: makeTask(),
+      broker,
+      runner: async () => ({
+        completed: true,
+        computeUnitsUsed: 10
+      })
+    });
+
+  const tampered = {
+    ...execution.receipt,
+    computeUnitsUsed: 9
+  };
+
+  assert.equal(
+    verifyReceiptHash(
+      tampered
+    ),
+    false
   );
 });
