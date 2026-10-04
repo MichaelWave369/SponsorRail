@@ -18,9 +18,21 @@ const FORBIDDEN_FUNDING_KEYS = new Set([
   "userIdentity"
 ]);
 
+const DEFAULT_POLICY = Object.freeze({
+  eligibleTaskClasses: ["*"],
+  allowedPrivacyModes: ["blind"],
+  maxComputePerGrant: null
+});
+
 function assertPositiveInteger(value, name) {
   if (!Number.isInteger(value) || value <= 0) {
     throw new TypeError(`${name} must be a positive integer`);
+  }
+}
+
+function assertNonNegativeInteger(value, name) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative integer`);
   }
 }
 
@@ -61,6 +73,77 @@ function containsForbiddenFundingKey(value) {
   }
 
   return false;
+}
+
+function normalizePolicy({
+  eligibleTaskClasses = DEFAULT_POLICY.eligibleTaskClasses,
+  allowedPrivacyModes = DEFAULT_POLICY.allowedPrivacyModes,
+  maxComputePerGrant = DEFAULT_POLICY.maxComputePerGrant
+} = {}) {
+  const taskClasses = [...new Set(eligibleTaskClasses.map(String))];
+  const privacyModes = [...new Set(allowedPrivacyModes.map(String))];
+
+  if (taskClasses.length === 0) {
+    throw new TypeError("eligibleTaskClasses cannot be empty");
+  }
+
+  if (privacyModes.length === 0) {
+    throw new TypeError("allowedPrivacyModes cannot be empty");
+  }
+
+  if (maxComputePerGrant !== null) {
+    assertPositiveInteger(maxComputePerGrant, "maxComputePerGrant");
+  }
+
+  return Object.freeze({
+    eligibleTaskClasses: Object.freeze(taskClasses),
+    allowedPrivacyModes: Object.freeze(privacyModes),
+    maxComputePerGrant
+  });
+}
+
+export function evaluatePolicy(request, policy) {
+  if (containsForbiddenFundingKey(request)) {
+    return Object.freeze({
+      eligible: false,
+      reason: "PRIVATE_DATA_REJECTED"
+    });
+  }
+
+  const normalized = normalizePolicy(policy);
+
+  const classAllowed =
+    normalized.eligibleTaskClasses.includes("*") ||
+    normalized.eligibleTaskClasses.includes(request.taskClass);
+
+  if (!classAllowed) {
+    return Object.freeze({
+      eligible: false,
+      reason: "TASK_CLASS_NOT_ELIGIBLE"
+    });
+  }
+
+  if (!normalized.allowedPrivacyModes.includes(request.privacy)) {
+    return Object.freeze({
+      eligible: false,
+      reason: "PRIVACY_MODE_NOT_ELIGIBLE"
+    });
+  }
+
+  if (
+    normalized.maxComputePerGrant !== null &&
+    request.computeRequested > normalized.maxComputePerGrant
+  ) {
+    return Object.freeze({
+      eligible: false,
+      reason: "GRANT_LIMIT_EXCEEDED"
+    });
+  }
+
+  return Object.freeze({
+    eligible: true,
+    reason: "ELIGIBLE"
+  });
 }
 
 export function sanitizeFundingRequest(task) {
@@ -107,55 +190,247 @@ export function buildExecutionAuthorization(grant) {
 }
 
 export class BlindSponsorPool {
-  #balance;
+  #availableCredits;
+  #reservedCredits;
+  #spentCredits;
+  #reservations;
 
   constructor({
     id,
     sponsorDisclosure,
     balanceCredits,
-    eligibleTaskClasses = ["*"]
+    eligibleTaskClasses = ["*"],
+    allowedPrivacyModes = ["blind"],
+    maxComputePerGrant = null,
+    reservedCredits = 0,
+    spentCredits = 0,
+    reservations = []
   }) {
     if (!id || !sponsorDisclosure) {
       throw new TypeError("pool id and sponsorDisclosure are required");
     }
 
-    assertPositiveInteger(balanceCredits, "balanceCredits");
+    assertNonNegativeInteger(balanceCredits, "balanceCredits");
+    assertNonNegativeInteger(reservedCredits, "reservedCredits");
+    assertNonNegativeInteger(spentCredits, "spentCredits");
 
     this.id = String(id);
     this.sponsorDisclosure = String(sponsorDisclosure);
-    this.eligibleTaskClasses = Object.freeze([...eligibleTaskClasses]);
-    this.#balance = balanceCredits;
+    this.policy = normalizePolicy({
+      eligibleTaskClasses,
+      allowedPrivacyModes,
+      maxComputePerGrant
+    });
+
+    this.#availableCredits = balanceCredits;
+    this.#reservedCredits = reservedCredits;
+    this.#spentCredits = spentCredits;
+    this.#reservations = new Map();
+
+    for (const reservation of reservations) {
+      assertPositiveInteger(
+        reservation.computeUnits,
+        "reservation.computeUnits"
+      );
+
+      this.#reservations.set(
+        String(reservation.reservationId),
+        Object.freeze({
+          reservationId: String(reservation.reservationId),
+          taskId: String(reservation.taskId),
+          taskClass: String(reservation.taskClass),
+          privacy: String(reservation.privacy),
+          computeUnits: reservation.computeUnits
+        })
+      );
+    }
+
+    const reservationTotal = [...this.#reservations.values()].reduce(
+      (sum, item) => sum + item.computeUnits,
+      0
+    );
+
+    if (reservationTotal !== this.#reservedCredits) {
+      throw new Error(
+        "reservedCredits does not match persisted reservations"
+      );
+    }
+  }
+
+  static fromSnapshot(snapshot) {
+    if (snapshot?.schema !== "sponsorrail.pool.v0.2") {
+      throw new Error("unsupported SponsorRail pool snapshot schema");
+    }
+
+    return new BlindSponsorPool({
+      id: snapshot.id,
+      sponsorDisclosure: snapshot.sponsorDisclosure,
+      balanceCredits: snapshot.availableCredits,
+      reservedCredits: snapshot.reservedCredits,
+      spentCredits: snapshot.spentCredits,
+      reservations: snapshot.reservations ?? [],
+      ...snapshot.policy
+    });
   }
 
   get balanceCredits() {
-    return this.#balance;
+    return this.#availableCredits;
   }
 
-  approve(request) {
+  get availableCredits() {
+    return this.#availableCredits;
+  }
+
+  get reservedCredits() {
+    return this.#reservedCredits;
+  }
+
+  get spentCredits() {
+    return this.#spentCredits;
+  }
+
+  get totalCredits() {
+    return (
+      this.#availableCredits +
+      this.#reservedCredits +
+      this.#spentCredits
+    );
+  }
+
+  evaluate(request) {
+    return evaluatePolicy(request, this.policy);
+  }
+
+  reserve(request) {
     if (containsForbiddenFundingKey(request)) {
-      throw new Error("blind sponsor pool received forbidden private task data");
+      throw new Error(
+        "blind sponsor pool received forbidden private task data"
+      );
     }
 
-    const eligible =
-      this.eligibleTaskClasses.includes("*") ||
-      this.eligibleTaskClasses.includes(request.taskClass);
+    const decision = this.evaluate(request);
 
-    if (!eligible || this.#balance < request.computeRequested) {
+    if (
+      !decision.eligible ||
+      this.#availableCredits < request.computeRequested
+    ) {
       return null;
     }
 
-    this.#balance -= request.computeRequested;
+    const reservation = Object.freeze({
+      reservationId: randomUUID(),
+      taskId: request.taskId,
+      taskClass: request.taskClass,
+      privacy: request.privacy,
+      computeUnits: request.computeRequested
+    });
+
+    this.#availableCredits -= reservation.computeUnits;
+    this.#reservedCredits += reservation.computeUnits;
+    this.#reservations.set(
+      reservation.reservationId,
+      reservation
+    );
+
+    return reservation;
+  }
+
+  settle(reservationId, usedUnits) {
+    assertNonNegativeInteger(usedUnits, "usedUnits");
+
+    const reservation = this.#reservations.get(
+      String(reservationId)
+    );
+
+    if (!reservation) {
+      throw new Error("unknown reservation");
+    }
+
+    if (usedUnits > reservation.computeUnits) {
+      throw new Error("settlement exceeds reserved compute");
+    }
+
+    const refundUnits =
+      reservation.computeUnits - usedUnits;
+
+    this.#reservedCredits -= reservation.computeUnits;
+    this.#spentCredits += usedUnits;
+    this.#availableCredits += refundUnits;
+    this.#reservations.delete(
+      reservation.reservationId
+    );
 
     return Object.freeze({
-      poolId: this.id,
-      computeUnits: request.computeRequested
+      reservedUnits: reservation.computeUnits,
+      usedUnits,
+      refundUnits
+    });
+  }
+
+  release(reservationId) {
+    const reservation = this.#reservations.get(
+      String(reservationId)
+    );
+
+    if (!reservation) {
+      return false;
+    }
+
+    this.#reservedCredits -= reservation.computeUnits;
+    this.#availableCredits += reservation.computeUnits;
+    this.#reservations.delete(
+      reservation.reservationId
+    );
+
+    return true;
+  }
+
+  snapshot() {
+    return Object.freeze({
+      schema: "sponsorrail.pool.v0.2",
+      id: this.id,
+      sponsorDisclosure: this.sponsorDisclosure,
+      policy: {
+        eligibleTaskClasses: [
+          ...this.policy.eligibleTaskClasses
+        ],
+        allowedPrivacyModes: [
+          ...this.policy.allowedPrivacyModes
+        ],
+        maxComputePerGrant:
+          this.policy.maxComputePerGrant
+      },
+      availableCredits: this.#availableCredits,
+      reservedCredits: this.#reservedCredits,
+      spentCredits: this.#spentCredits,
+      reservations: [
+        ...this.#reservations.values()
+      ].map((item) => ({ ...item }))
     });
   }
 }
 
 export class FundingBroker {
-  constructor(pools = []) {
+  #grants;
+
+  constructor(pools = [], { store = null } = {}) {
+    this.store = store;
     this.pools = [...pools];
+    this.#grants = new Map();
+
+    if (this.pools.length === 0 && this.store) {
+      this.pools = this.store
+        .loadSnapshots()
+        .map(BlindSponsorPool.fromSnapshot);
+    }
+  }
+
+  #persist() {
+    if (this.store) {
+      this.store.saveSnapshots(
+        this.pools.map((pool) => pool.snapshot())
+      );
+    }
   }
 
   authorize(task) {
@@ -167,39 +442,128 @@ export class FundingBroker {
     }
 
     const request = sanitizeFundingRequest(task);
+    let lastPolicyReason =
+      "NO_ELIGIBLE_SPONSOR_POOL";
 
     for (const pool of this.pools) {
-      const approval = pool.approve(request);
-      if (!approval) continue;
+      const decision = pool.evaluate(request);
 
-      return Object.freeze({
+      if (!decision.eligible) {
+        lastPolicyReason = decision.reason;
+        continue;
+      }
+
+      const reservation = pool.reserve(request);
+
+      if (!reservation) {
+        lastPolicyReason =
+          "INSUFFICIENT_SPONSOR_CREDITS";
+        continue;
+      }
+
+      const grant = Object.freeze({
         funded: true,
         grantId: randomUUID(),
-        poolId: approval.poolId,
-        computeUnits: approval.computeUnits,
-        sponsorDisclosure: pool.sponsorDisclosure
+        poolId: pool.id,
+        reservationId:
+          reservation.reservationId,
+        computeUnits:
+          reservation.computeUnits,
+        sponsorDisclosure:
+          pool.sponsorDisclosure
       });
+
+      this.#grants.set(grant.grantId, grant);
+      this.#persist();
+
+      return grant;
     }
 
     return Object.freeze({
       funded: false,
-      reason: "NO_ELIGIBLE_SPONSOR_POOL"
+      reason: lastPolicyReason
     });
+  }
+
+  settle(grant, usedUnits) {
+    const known = this.#grants.get(
+      String(grant?.grantId)
+    );
+
+    if (!known) {
+      throw new Error("unknown grant");
+    }
+
+    const pool = this.pools.find(
+      (candidate) => candidate.id === known.poolId
+    );
+
+    if (!pool) {
+      throw new Error("grant pool unavailable");
+    }
+
+    const settlement = pool.settle(
+      known.reservationId,
+      usedUnits
+    );
+
+    this.#grants.delete(known.grantId);
+    this.#persist();
+
+    return settlement;
+  }
+
+  release(grant) {
+    const known = this.#grants.get(
+      String(grant?.grantId)
+    );
+
+    if (!known) {
+      return false;
+    }
+
+    const pool = this.pools.find(
+      (candidate) => candidate.id === known.poolId
+    );
+
+    if (!pool) {
+      throw new Error("grant pool unavailable");
+    }
+
+    const released = pool.release(
+      known.reservationId
+    );
+
+    this.#grants.delete(known.grantId);
+    this.#persist();
+
+    return released;
   }
 }
 
 export function createReceiptKeyPair() {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const { publicKey, privateKey } =
+    generateKeyPairSync("ed25519");
 
   return {
-    publicKey: publicKey.export({ type: "spki", format: "pem" }),
-    privateKey: privateKey.export({ type: "pkcs8", format: "pem" })
+    publicKey: publicKey.export({
+      type: "spki",
+      format: "pem"
+    }),
+    privateKey: privateKey.export({
+      type: "pkcs8",
+      format: "pem"
+    })
   };
 }
 
 export function signReceipt(payload, privateKey) {
   const canonical = canonicalJson(payload);
-  const signature = cryptoSign(null, Buffer.from(canonical), privateKey);
+  const signature = cryptoSign(
+    null,
+    Buffer.from(canonical),
+    privateKey
+  );
 
   return Object.freeze({
     ...payload,
@@ -232,7 +596,10 @@ export async function executeSponsoredTask({
   runner,
   receiptPrivateKey
 }) {
-  if (!broker || typeof broker.authorize !== "function") {
+  if (
+    !broker ||
+    typeof broker.authorize !== "function"
+  ) {
     throw new TypeError("broker is required");
   }
 
@@ -250,34 +617,62 @@ export async function executeSponsoredTask({
   }
 
   const modelContext = buildModelContext(task);
-  const authorization = buildExecutionAuthorization(grant);
+  const authorization =
+    buildExecutionAuthorization(grant);
 
-  const result = await runner(
-    Object.freeze({
-      modelContext,
-      authorization
-    })
-  );
+  let result;
+  let computeUnitsUsed;
+  let settlement;
 
-  const computeUnitsUsed = Number(result?.computeUnitsUsed ?? 0);
-  if (
-    !Number.isInteger(computeUnitsUsed) ||
-    computeUnitsUsed < 0 ||
-    computeUnitsUsed > authorization.computeUnits
-  ) {
-    throw new Error("runner reported invalid compute usage");
+  try {
+    result = await runner(
+      Object.freeze({
+        modelContext,
+        authorization
+      })
+    );
+
+    computeUnitsUsed = Number(
+      result?.computeUnitsUsed ?? 0
+    );
+
+    if (
+      !Number.isInteger(computeUnitsUsed) ||
+      computeUnitsUsed < 0 ||
+      computeUnitsUsed >
+        authorization.computeUnits
+    ) {
+      throw new Error(
+        "runner reported invalid compute usage"
+      );
+    }
+
+    settlement = broker.settle(
+      grant,
+      computeUnitsUsed
+    );
+  } catch (error) {
+    broker.release(grant);
+    throw error;
   }
 
   const receiptPayload = {
-    schema: "sponsorrail.receipt.v0.1",
+    schema: "sponsorrail.receipt.v0.2",
     runId: randomUUID(),
     taskId: String(task.id),
-    taskClass: String(task.taskClass ?? "software-development"),
-    computeUnitsAuthorized: authorization.computeUnits,
+    taskClass: String(
+      task.taskClass ?? "software-development"
+    ),
+    computeUnitsAuthorized:
+      authorization.computeUnits,
     computeUnitsUsed,
+    computeUnitsRefunded:
+      settlement.refundUnits,
     userCostCredits: 0,
-    sponsorContributionCredits: computeUnitsUsed,
-    sponsorDisclosure: grant.sponsorDisclosure,
+    sponsorContributionCredits:
+      computeUnitsUsed,
+    sponsorDisclosure:
+      grant.sponsorDisclosure,
     privacy: {
       promptDisclosedToSponsor: false,
       repositoryDisclosedToSponsor: false,
@@ -297,7 +692,10 @@ export async function executeSponsoredTask({
   };
 
   const receipt = receiptPrivateKey
-    ? signReceipt(receiptPayload, receiptPrivateKey)
+    ? signReceipt(
+        receiptPayload,
+        receiptPrivateKey
+      )
     : Object.freeze(receiptPayload);
 
   return Object.freeze({

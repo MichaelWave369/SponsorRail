@@ -4,8 +4,11 @@ export {
   buildExecutionAuthorization,
   buildModelContext,
   createReceiptKeyPair,
+  evaluatePolicy,
   executeSponsoredTask,
   sanitizeFundingRequest,
   signReceipt,
   verifyReceipt
 } from "./sponsorrail.js";
+
+export { JsonPoolStore, POOL_STORE_SCHEMA } from "./store.js";

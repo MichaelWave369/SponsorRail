@@ -4,7 +4,7 @@
 
 > **Someone can pay for your AI to work. Nobody buys the right to tell it what to think.**
 
-SponsorRail explores a simple rule:
+SponsorRail follows one rule:
 
 ## FUNDING != AUTHORITY
 
@@ -12,17 +12,20 @@ Money may grant compute. Money may not grant control.
 
 Instead of forcing users to watch intrusive ads, SponsorRail treats sponsorship as a compute grant. A company, community, patron, or public-interest fund can pay for agent work while the funding plane remains separated from the agent's private execution context.
 
-## What v0.1 proves
+## v0.2 accounting rung
 
-The first reference implementation demonstrates that:
+SponsorRail v0.2 adds broker mechanics on top of the v0.1 trust boundary:
 
-- blind sponsors receive coarse funding metadata, not prompts or repository contents
-- sponsor identity is excluded from model context
-- sponsor instructions are excluded from execution authorization
-- users can decline sponsorship
-- compute is explicitly authorized and metered
-- receipts omit prompts, source context, and model output
-- receipts can be signed and independently verified with Ed25519
+- policy matching by coarse task class, privacy mode, and per-grant compute limit
+- reserve-before-execute accounting
+- settlement against actual compute used
+- automatic refund of unused reserved credits
+- full reservation release when execution fails or reports invalid usage
+- JSON persistence for pool balances, policies, and coarse reservation state
+- restart-safe visibility of outstanding pool reservations
+- v0.2 signed receipts that record refunded compute
+
+Authorization is not spending. A 25-credit grant that uses 17 credits settles 17 and returns 8 to the pool.
 
 ## Quick start
 
@@ -46,42 +49,60 @@ Sponsor / Patron
 | SponsorRail Broker |
 +--------------------+
       |
-      | opaque compute grant
+      | reserve N units
       v
 +--------------------+        private task        +----------------+
 |  Execution Gate    | -------------------------> |  Agent Runtime |
 +--------------------+                            +----------------+
+      ^                                                  |
       |                                                  |
-      '---------------- metering ------------------------'
+      +--------- settle actual use / refund rest --------+
                          |
                          v
                   Signed receipt
 ```
 
-The sponsor attribution exists in the funding and receipt planes. It does **not** enter the model context.
+Sponsor attribution exists in the funding and receipt planes. It does **not** enter model context.
 
-## Example
+## Accounting example
 
-A sponsor creates a 100-credit blind pool. A user requests a 25-credit coding task. SponsorRail exposes only the task ID, coarse task class, requested units, cost ceiling, and privacy mode to the funding side. The agent receives the private prompt plus an opaque compute authorization. After execution, SponsorRail emits a signed receipt recording who funded the computation and how much was used without copying private task data into the receipt.
+A sponsor pool starts with 100 credits. A coding task requests 25.
 
-See `examples/basic.mjs`.
+```text
+before authorization: available 100 / reserved 0 / spent 0
+after authorization:  available  75 / reserved 25 / spent 0
+after using 17:       available  83 / reserved 0 / spent 17
+```
+
+The total remains 100. Eight unused credits return to the sponsor pool.
+
+## Persistence
+
+`JsonPoolStore` writes versioned pool snapshots using a temporary file and rename. Persisted blind-mode reservation state contains coarse metadata only: task ID, task class, privacy mode, and reserved compute units. Prompt text, repository context, source code, and model output are never written by this store.
+
+The v0.2 reference store is **single-process**. It does not yet provide multi-process locking or a transactional database.
 
 ## Documentation
 
 - [Principles](docs/principles.md)
 - [Architecture](docs/architecture.md)
-- [Protocol v0.1](docs/protocol.md)
+- [Protocol](docs/protocol.md)
+- [Accounting](docs/accounting.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
 
 **Experimental / pre-alpha.**
 
-SponsorRail v0.1 is a boundary proof, not a production advertising network or payment system. The current receipt assertions demonstrate reference-runtime behavior; they are not yet hardware-backed or confidential-compute attestations.
+SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee. Current receipt assertions demonstrate reference-runtime behavior; they are not hardware-backed attestations.
+
+### Known v0.2 boundary
+
+Pool reservations survive a process restart, but the broker's in-memory grant lookup does not yet recover those grants for settlement. Outstanding reservations remain visible in persistent state rather than silently disappearing. Durable grant recovery is an explicit next qualification rung.
 
 ## Roadmap
 
-Next milestones are expected to cover persistent sponsor pools, policy matching, richer metering, privacy-preserving eligibility, receipt chains, provider adapters, and real settlement boundaries while preserving the core rule that funding never grants authority over agent cognition.
+Next milestones include durable grant recovery and expiration, receipt chaining, settlement/provider adapters, stronger concurrency controls, privacy-preserving eligibility, fraud resistance, and production-grade key management while preserving the rule that funding never grants authority over agent cognition.
 
 ## License
 
