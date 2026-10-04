@@ -1845,6 +1845,21 @@ export class FundingBroker {
       payload
     );
   }
+
+  commitReceiptPayload(payload, privateKey = null) {
+    const chain = this.prepareReceipt(payload);
+    const chainedPayload = {
+      ...payload,
+      chain
+    };
+
+    const receipt = privateKey
+      ? signReceipt(chainedPayload, privateKey)
+      : Object.freeze(chainedPayload);
+
+    this.commitReceipt(receipt);
+    return receipt;
+  }
 }
 
 export function createReceiptKeyPair() {
@@ -2129,7 +2144,7 @@ export async function executeSponsoredTask({
 
   const receiptPayload = {
     schema:
-      "sponsorrail.receipt.v0.4",
+      "sponsorrail.receipt.v0.5",
     runId: randomUUID(),
     taskId:
       String(task.id),
@@ -2184,29 +2199,33 @@ export async function executeSponsoredTask({
       true
   };
 
-  const chain =
-    broker.prepareReceipt(
-      receiptPayload
-    );
-
-  const chainedPayload = {
-    ...receiptPayload,
-    chain
-  };
-
   const receipt =
-    receiptPrivateKey
-      ? signReceipt(
-          chainedPayload,
-          receiptPrivateKey
+    typeof broker.commitReceiptPayload === "function"
+      ? broker.commitReceiptPayload(
+          receiptPayload,
+          receiptPrivateKey ?? null
         )
-      : Object.freeze(
-          chainedPayload
-        );
-
-  broker.commitReceipt(
-    receipt
-  );
+      : (() => {
+          const chain = broker.prepareReceipt(
+            receiptPayload
+          );
+          const chainedPayload = {
+            ...receiptPayload,
+            chain
+          };
+          const fallbackReceipt = receiptPrivateKey
+            ? signReceipt(
+                chainedPayload,
+                receiptPrivateKey
+              )
+            : Object.freeze(
+                chainedPayload
+              );
+          broker.commitReceipt(
+            fallbackReceipt
+          );
+          return fallbackReceipt;
+        })();
 
   return Object.freeze({
     status: "COMPLETED",
