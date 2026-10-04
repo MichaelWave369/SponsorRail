@@ -155,3 +155,37 @@ The SponsorRail receipt commits to the provider receipt by SHA-256 and records w
 A compute provider is not a sponsor.
 
 The provider may receive private execution context when needed to perform computation. SponsorRail prevents sponsor metadata from crossing into that execution envelope. Provider privacy and retention policy are therefore separate from sponsor privacy and must be evaluated independently.
+
+
+## Ollama adapter v0.7
+
+The first concrete provider adapter uses Ollama's non-streaming chat API.
+
+The request contains:
+
+- configured model
+- private task/repository context as chat messages
+- `stream: false`
+- runtime options
+- `num_predict` clamped to the SponsorRail authorization ceiling
+
+Sponsor identity and sponsor instructions are not included.
+
+### Metering
+
+Ollama exposes prompt and generated token counts. v0.7 uses generated tokens as the settlement metric:
+
+```text
+usageMetric = ollama-output-tokens
+computeUnitsUsed = eval_count
+```
+
+The adapter returns prompt token counts, cached prompt tokens, and duration telemetry to the caller, but these fields do not increase sponsor settlement.
+
+This choice makes the charged quantity pre-authorizable through `num_predict`.
+
+### Endpoint policy
+
+Loopback hosts are permitted by default.
+
+Remote Ollama-compatible endpoints require explicit `allowRemote: true`. Non-loopback HTTP additionally requires explicit `allowInsecureRemote: true`; otherwise HTTPS is required.
