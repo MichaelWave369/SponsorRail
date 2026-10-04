@@ -11,37 +11,83 @@ import {
   createReceiptKeyPair,
   executeSponsoredTask,
   verifyReceipt,
-  verifyReceiptHash
+  verifyReceiptChain
 } from "../src/index.js";
 
 const dir = mkdtempSync(
-  join(tmpdir(), "sponsorrail-demo-")
+  join(
+    tmpdir(),
+    "sponsorrail-demo-"
+  )
 );
 
-const store = new JsonPoolStore(
-  join(dir, "state.json")
+const store =
+  new JsonPoolStore(
+    join(
+      dir,
+      "state.json"
+    )
+  );
+
+let now = 1_000;
+
+const pool =
+  new BlindSponsorPool({
+    id: "oss-pool",
+    sponsorDisclosure:
+      "ExampleCloud",
+    balanceCredits: 100,
+    eligibleTaskClasses: [
+      "software-development"
+    ],
+    allowedPrivacyModes: [
+      "blind"
+    ],
+    maxComputePerGrant: 50
+  });
+
+const broker =
+  new FundingBroker(
+    [pool],
+    {
+      store,
+      now: () => now,
+      grantTtlMs: 100
+    }
+  );
+
+const previewGrant =
+  broker.authorize({
+    id: "heartbeat-demo",
+    taskClass:
+      "software-development",
+    computeRequested: 5,
+    privacy: "blind",
+    allowSponsorship: true,
+    prompt: "private"
+  });
+
+now = 1_080;
+
+const renewed =
+  broker.heartbeat(
+    previewGrant,
+    {
+      leaseMs: 200
+    }
+  );
+
+console.log(
+  "Renewed lease:",
+  renewed.expiresAt
 );
 
-const pool = new BlindSponsorPool({
-  id: "oss-pool",
-  sponsorDisclosure: "ExampleCloud",
-  balanceCredits: 100,
-  eligibleTaskClasses: [
-    "software-development"
-  ],
-  allowedPrivacyModes: ["blind"],
-  maxComputePerGrant: 50
-});
-
-const broker = new FundingBroker(
-  [pool],
-  {
-    store,
-    grantTtlMs: 60_000
-  }
+broker.release(
+  renewed
 );
 
-const keys = createReceiptKeyPair();
+const keys =
+  createReceiptKeyPair();
 
 const task = {
   id: "task-001",
@@ -63,40 +109,32 @@ const execution =
     broker,
     receiptPrivateKey:
       keys.privateKey,
-    runner: async ({
-      modelContext,
-      authorization
-    }) => {
-      console.log(
-        "Agent sees:",
-        modelContext
-      );
-
-      console.log(
-        "Execution authorization:",
+    runner:
+      async ({
+        modelContext,
         authorization
-      );
+      }) => {
+        console.log(
+          "Agent sees:",
+          modelContext
+        );
 
-      return {
-        completed: true,
-        computeUnitsUsed: 18,
-        summary:
-          "Health endpoint implemented and tests passed."
-      };
-    }
+        console.log(
+          "Execution authorization:",
+          authorization
+        );
+
+        return {
+          completed: true,
+          computeUnitsUsed: 18,
+          summary:
+            "Health endpoint implemented and tests passed."
+        };
+      }
   });
 
-console.log("\nSponsor receipt:");
 console.log(
-  JSON.stringify(
-    execution.receipt,
-    null,
-    2
-  )
-);
-
-console.log(
-  "\nReceipt signature valid:",
+  "Receipt signature valid:",
   verifyReceipt(
     execution.receipt,
     keys.publicKey
@@ -104,10 +142,18 @@ console.log(
 );
 
 console.log(
-  "Receipt hash valid:",
-  verifyReceiptHash(
-    execution.receipt
+  "Journal valid:",
+  verifyReceiptChain(
+    store
+      .loadReceiptJournal()
   )
+);
+
+console.log(
+  "Journal entries:",
+  store
+    .loadReceiptJournal()
+    .length
 );
 
 console.log(
@@ -127,10 +173,21 @@ console.log(
 const restarted =
   new FundingBroker(
     [],
-    { store }
+    {
+      store,
+      now: () => now
+    }
   );
 
 console.log(
-  "Recovered receipt chain:",
-  restarted.receiptChainState()
+  "Recovered chain:",
+  restarted
+    .receiptChainState()
+);
+
+console.log(
+  "Recovered journal entries:",
+  restarted
+    .receiptJournal()
+    .length
 );
