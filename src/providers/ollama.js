@@ -176,8 +176,6 @@ function timeoutSignal(
       timeoutMs
     );
 
-  timer.unref?.();
-
   return {
     signal:
       controller.signal,
