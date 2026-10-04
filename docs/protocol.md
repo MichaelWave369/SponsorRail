@@ -1,6 +1,6 @@
-# Sponsored Compute Protocol v0.3
+# Sponsored Compute Protocol v0.4
 
-This document describes the reference message shapes. It is not yet a stable standard.
+This document describes the reference protocol. It is not yet a stable standard.
 
 ## Funding request
 
@@ -14,120 +14,87 @@ This document describes the reference message shapes. It is not yet a stable sta
 }
 ```
 
-No prompt, repository content, source code, output, or user identity is allowed in a blind funding request.
+Blind funding requests exclude prompt text, repository contents, source code, model output, and user identity.
 
-## Pool policy
+## Durable grant
 
-```json
-{
-  "eligibleTaskClasses": ["software-development"],
-  "allowedPrivacyModes": ["blind"],
-  "maxComputePerGrant": 5000
-}
-```
-
-Policy matching operates only on fields already allowed into the funding plane.
-
-## Reservation lease
-
-When a pool accepts a request, requested compute moves from `availableCredits` to `reservedCredits`.
+A grant binds a reservation to an opaque authorization and lease.
 
 ```json
 {
-  "reservationId": "pool-generated-uuid",
-  "taskId": "task-001",
-  "taskClass": "software-development",
-  "privacy": "blind",
-  "computeUnits": 2500,
-  "issuedAt": "2026-10-04T21:00:00.000Z",
-  "expiresAt": "2026-10-04T21:05:00.000Z"
-}
-```
-
-Authorization is not spending.
-
-## Durable broker grant
-
-```json
-{
-  "funded": true,
-  "grantId": "broker-generated-uuid",
+  "grantId": "uuid",
   "poolId": "oss-pool",
-  "reservationId": "pool-generated-uuid",
-  "taskId": "task-001",
-  "taskClass": "software-development",
-  "privacy": "blind",
+  "reservationId": "uuid",
   "computeUnits": 2500,
-  "sponsorDisclosure": "ExampleCloud",
-  "issuedAt": "2026-10-04T21:00:00.000Z",
-  "expiresAt": "2026-10-04T21:05:00.000Z"
+  "issuedAt": "2026-10-04T22:00:00.000Z",
+  "expiresAt": "2026-10-04T22:05:00.000Z"
 }
 ```
 
-The durable grant remains in the funding plane and is persisted with pool state.
+Only `grantId` and `computeUnits` cross into the execution plane.
 
-## Execution authorization
+## Heartbeat
 
-```json
-{
-  "grantId": "broker-generated-uuid",
-  "computeUnits": 2500
-}
+An active grant may be renewed before expiry.
+
+```text
+heartbeat(grant, leaseMs)
 ```
 
-This is the only funding-derived object passed into the execution plane.
+The broker updates both the durable grant and matching reservation. Heartbeat never increases the compute-unit authorization.
 
-## Recovery
+An expired grant is released and cannot be revived.
 
-A broker started with an empty pool list and a configured store reconstructs:
+## Idempotent settlement
 
-- pool balances and reservations
-- active durable grants
-- receipt-chain sequence and head hash
-
-Recovered active grants can be settled or released using the same grant ID.
-
-## Reconciliation
-
-Reconciliation checks:
-
-1. grants whose pool no longer exists
-2. grants whose reservation no longer exists
-3. expired grants
-4. reservations without a matching grant
-
-Expired grants release their reservations. Unexpired orphan reservations are reported and retained. Expired orphan reservations are released.
-
-## Settlement
-
-If 1700 of 2500 reserved units are used:
-
-```json
-{
-  "reservedUnits": 2500,
-  "usedUnits": 1700,
-  "refundUnits": 800
-}
+```text
+settle(grant, usedUnits, idempotencyKey)
 ```
 
-The pool moves 1700 units to `spentCredits` and returns 800 to `availableCredits`.
+A successful settlement creates a durable settlement record.
 
-## Receipt chain
+Replaying the same grant and usage returns the original settlement result without charging again, including after broker restart.
 
-Receipts use schema identifier `sponsorrail.receipt.v0.3`.
+A conflicting replay with different usage is rejected.
 
-```json
-{
-  "chain": {
-    "sequence": 42,
-    "previousReceiptHash": "hex-or-null",
-    "receiptHash": "hex"
-  }
-}
+## Receipt commit
+
+v0.4 splits receipt construction into:
+
+```text
+prepareReceipt(payload)
+        |
+        v
+sign optional receipt
+        |
+        v
+commitReceipt(receipt)
 ```
 
-The receipt hash commits to the receipt payload, previous receipt hash, and sequence. The broker persists only the latest chain sequence and head hash. Receipts may additionally carry an Ed25519 signature.
+`commitReceipt` verifies chain integrity, appends the receipt to the durable journal, advances the chain head, and persists state.
 
-`verifyReceiptHash` checks one receipt's hash commitment. `verifyReceiptChain` checks hash integrity and adjacency for an ordered receipt set.
+## Receipt journal
 
-The chain is evidence of ordering and tamper detection in the reference runtime. It is not hardware-backed attestation or a public transparency log.
+The reference store uses newline-delimited JSON:
+
+```text
+state.json.receipts.ndjson
+```
+
+Each line is one complete receipt.
+
+The journal is append-only through the SponsorRail API. Duplicate receipt hashes are not appended twice.
+
+On startup, a valid journal whose tail is ahead of the state document can restore the persisted chain head.
+
+## Receipt schema
+
+Receipts use:
+
+```text
+sponsorrail.receipt.v0.4
+```
+
+and retain grant and task identifiers, authorized/used/refunded compute, sponsor disclosure, privacy and inference assertions, a model-context hash, chain sequence, previous receipt hash, receipt hash, and optional Ed25519 signature.
+
+The receipt journal is evidence of runtime ordering and tamper detection. It is not a public transparency log, confidential-compute proof, or hardware-backed attestation.

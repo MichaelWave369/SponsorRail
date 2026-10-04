@@ -24,18 +24,31 @@ const DEFAULT_POLICY = Object.freeze({
   maxComputePerGrant: null
 });
 
-const DEFAULT_GRANT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_GRANT_TTL_MS =
+  5 * 60 * 1000;
 
-function assertPositiveInteger(value, name) {
-  if (!Number.isInteger(value) || value <= 0) {
+function assertPositiveInteger(
+  value,
+  name
+) {
+  if (
+    !Number.isInteger(value) ||
+    value <= 0
+  ) {
     throw new TypeError(
       `${name} must be a positive integer`
     );
   }
 }
 
-function assertNonNegativeInteger(value, name) {
-  if (!Number.isInteger(value) || value < 0) {
+function assertNonNegativeInteger(
+  value,
+  name
+) {
+  if (
+    !Number.isInteger(value) ||
+    value < 0
+  ) {
     throw new TypeError(
       `${name} must be a non-negative integer`
     );
@@ -47,41 +60,68 @@ function canonicalize(value) {
     return value.map(canonicalize);
   }
 
-  if (value && typeof value === "object") {
+  if (
+    value &&
+    typeof value === "object"
+  ) {
     return Object.keys(value)
       .sort()
-      .reduce((result, key) => {
-        result[key] = canonicalize(value[key]);
-        return result;
-      }, {});
+      .reduce(
+        (result, key) => {
+          result[key] =
+            canonicalize(
+              value[key]
+            );
+
+          return result;
+        },
+        {}
+      );
   }
 
   return value;
 }
 
 function canonicalJson(value) {
-  return JSON.stringify(canonicalize(value));
+  return JSON.stringify(
+    canonicalize(value)
+  );
 }
 
 function sha256Json(value) {
   return createHash("sha256")
-    .update(canonicalJson(value))
+    .update(
+      canonicalJson(value)
+    )
     .digest("hex");
 }
 
-function containsForbiddenFundingKey(value) {
-  if (!value || typeof value !== "object") {
+function containsForbiddenFundingKey(
+  value
+) {
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
     return false;
   }
 
-  for (const [key, nested] of Object.entries(
-    value
-  )) {
-    if (FORBIDDEN_FUNDING_KEYS.has(key)) {
+  for (
+    const [key, nested]
+    of Object.entries(value)
+  ) {
+    if (
+      FORBIDDEN_FUNDING_KEYS
+        .has(key)
+    ) {
       return true;
     }
 
-    if (containsForbiddenFundingKey(nested)) {
+    if (
+      containsForbiddenFundingKey(
+        nested
+      )
+    ) {
       return true;
     }
   }
@@ -91,37 +131,48 @@ function containsForbiddenFundingKey(value) {
 
 function normalizePolicy({
   eligibleTaskClasses =
-    DEFAULT_POLICY.eligibleTaskClasses,
+    DEFAULT_POLICY
+      .eligibleTaskClasses,
   allowedPrivacyModes =
-    DEFAULT_POLICY.allowedPrivacyModes,
+    DEFAULT_POLICY
+      .allowedPrivacyModes,
   maxComputePerGrant =
-    DEFAULT_POLICY.maxComputePerGrant
+    DEFAULT_POLICY
+      .maxComputePerGrant
 } = {}) {
   const taskClasses = [
     ...new Set(
-      eligibleTaskClasses.map(String)
+      eligibleTaskClasses
+        .map(String)
     )
   ];
 
   const privacyModes = [
     ...new Set(
-      allowedPrivacyModes.map(String)
+      allowedPrivacyModes
+        .map(String)
     )
   ];
 
-  if (taskClasses.length === 0) {
+  if (
+    taskClasses.length === 0
+  ) {
     throw new TypeError(
       "eligibleTaskClasses cannot be empty"
     );
   }
 
-  if (privacyModes.length === 0) {
+  if (
+    privacyModes.length === 0
+  ) {
     throw new TypeError(
       "allowedPrivacyModes cannot be empty"
     );
   }
 
-  if (maxComputePerGrant !== null) {
+  if (
+    maxComputePerGrant !== null
+  ) {
     assertPositiveInteger(
       maxComputePerGrant,
       "maxComputePerGrant"
@@ -130,42 +181,58 @@ function normalizePolicy({
 
   return Object.freeze({
     eligibleTaskClasses:
-      Object.freeze(taskClasses),
+      Object.freeze(
+        taskClasses
+      ),
     allowedPrivacyModes:
-      Object.freeze(privacyModes),
+      Object.freeze(
+        privacyModes
+      ),
     maxComputePerGrant
   });
 }
 
-function normalizeTime(value, name) {
-  const milliseconds =
+function normalizeTime(
+  value,
+  name
+) {
+  const ms =
     value instanceof Date
       ? value.getTime()
       : Number(value);
 
   if (
-    !Number.isFinite(milliseconds) ||
-    milliseconds < 0
+    !Number.isFinite(ms) ||
+    ms < 0
   ) {
     throw new TypeError(
       `${name} must be a valid time`
     );
   }
 
-  return milliseconds;
+  return ms;
 }
 
-function toIso(milliseconds) {
-  return new Date(milliseconds).toISOString();
+function toIso(ms) {
+  return new Date(ms)
+    .toISOString();
 }
 
-function isExpired(expiresAt, nowMs) {
-  if (!expiresAt) return false;
+function isExpired(
+  expiresAt,
+  nowMs
+) {
+  if (!expiresAt) {
+    return false;
+  }
 
-  const expiresMs = Date.parse(expiresAt);
+  const expiresMs =
+    Date.parse(expiresAt);
 
   return (
-    Number.isFinite(expiresMs) &&
+    Number.isFinite(
+      expiresMs
+    ) &&
     expiresMs <= nowMs
   );
 }
@@ -177,9 +244,23 @@ function computeReceiptHash(
 ) {
   return sha256Json({
     previousReceiptHash:
-      previousReceiptHash ?? null,
+      previousReceiptHash ??
+      null,
     sequence,
     payload
+  });
+}
+
+function settlementResult(
+  record
+) {
+  return Object.freeze({
+    reservedUnits:
+      record.reservedUnits,
+    usedUnits:
+      record.usedUnits,
+    refundUnits:
+      record.refundUnits
   });
 }
 
@@ -187,10 +268,15 @@ export function evaluatePolicy(
   request,
   policy
 ) {
-  if (containsForbiddenFundingKey(request)) {
+  if (
+    containsForbiddenFundingKey(
+      request
+    )
+  ) {
     return Object.freeze({
       eligible: false,
-      reason: "PRIVATE_DATA_REJECTED"
+      reason:
+        "PRIVATE_DATA_REJECTED"
     });
   }
 
@@ -198,36 +284,49 @@ export function evaluatePolicy(
     normalizePolicy(policy);
 
   const classAllowed =
-    normalized.eligibleTaskClasses
+    normalized
+      .eligibleTaskClasses
       .includes("*") ||
-    normalized.eligibleTaskClasses
-      .includes(request.taskClass);
+    normalized
+      .eligibleTaskClasses
+      .includes(
+        request.taskClass
+      );
 
   if (!classAllowed) {
     return Object.freeze({
       eligible: false,
-      reason: "TASK_CLASS_NOT_ELIGIBLE"
+      reason:
+        "TASK_CLASS_NOT_ELIGIBLE"
     });
   }
 
   if (
-    !normalized.allowedPrivacyModes
-      .includes(request.privacy)
+    !normalized
+      .allowedPrivacyModes
+      .includes(
+        request.privacy
+      )
   ) {
     return Object.freeze({
       eligible: false,
-      reason: "PRIVACY_MODE_NOT_ELIGIBLE"
+      reason:
+        "PRIVACY_MODE_NOT_ELIGIBLE"
     });
   }
 
   if (
-    normalized.maxComputePerGrant !== null &&
+    normalized
+      .maxComputePerGrant !==
+        null &&
     request.computeRequested >
-      normalized.maxComputePerGrant
+      normalized
+        .maxComputePerGrant
   ) {
     return Object.freeze({
       eligible: false,
-      reason: "GRANT_LIMIT_EXCEEDED"
+      reason:
+        "GRANT_LIMIT_EXCEEDED"
     });
   }
 
@@ -237,9 +336,16 @@ export function evaluatePolicy(
   });
 }
 
-export function sanitizeFundingRequest(task) {
-  if (!task || typeof task !== "object") {
-    throw new TypeError("task is required");
+export function sanitizeFundingRequest(
+  task
+) {
+  if (
+    !task ||
+    typeof task !== "object"
+  ) {
+    throw new TypeError(
+      "task is required"
+    );
   }
 
   assertPositiveInteger(
@@ -263,16 +369,24 @@ export function sanitizeFundingRequest(task) {
     )
   };
 
-  if (containsForbiddenFundingKey(request)) {
+  if (
+    containsForbiddenFundingKey(
+      request
+    )
+  ) {
     throw new Error(
       "funding request contains private task data"
     );
   }
 
-  return Object.freeze(request);
+  return Object.freeze(
+    request
+  );
 }
 
-export function buildModelContext(task) {
+export function buildModelContext(
+  task
+) {
   if (!task?.prompt) {
     throw new TypeError(
       "task.prompt is required"
@@ -281,10 +395,13 @@ export function buildModelContext(task) {
 
   return Object.freeze({
     taskId: String(task.id),
-    prompt: String(task.prompt),
-    repositoryContext: String(
-      task.repositoryContext ?? ""
-    )
+    prompt:
+      String(task.prompt),
+    repositoryContext:
+      String(
+        task.repositoryContext ??
+          ""
+      )
   });
 }
 
@@ -297,8 +414,10 @@ export function buildExecutionAuthorization(
   );
 
   return Object.freeze({
-    grantId: String(grant.grantId),
-    computeUnits: grant.computeUnits
+    grantId:
+      String(grant.grantId),
+    computeUnits:
+      grant.computeUnits
   });
 }
 
@@ -312,14 +431,22 @@ export class BlindSponsorPool {
     id,
     sponsorDisclosure,
     balanceCredits,
-    eligibleTaskClasses = ["*"],
-    allowedPrivacyModes = ["blind"],
-    maxComputePerGrant = null,
+    eligibleTaskClasses = [
+      "*"
+    ],
+    allowedPrivacyModes = [
+      "blind"
+    ],
+    maxComputePerGrant =
+      null,
     reservedCredits = 0,
     spentCredits = 0,
     reservations = []
   }) {
-    if (!id || !sponsorDisclosure) {
+    if (
+      !id ||
+      !sponsorDisclosure
+    ) {
       throw new TypeError(
         "pool id and sponsorDisclosure are required"
       );
@@ -343,13 +470,16 @@ export class BlindSponsorPool {
     this.id = String(id);
 
     this.sponsorDisclosure =
-      String(sponsorDisclosure);
+      String(
+        sponsorDisclosure
+      );
 
-    this.policy = normalizePolicy({
-      eligibleTaskClasses,
-      allowedPrivacyModes,
-      maxComputePerGrant
-    });
+    this.policy =
+      normalizePolicy({
+        eligibleTaskClasses,
+        allowedPrivacyModes,
+        maxComputePerGrant
+      });
 
     this.#availableCredits =
       balanceCredits;
@@ -360,49 +490,70 @@ export class BlindSponsorPool {
     this.#spentCredits =
       spentCredits;
 
-    this.#reservations = new Map();
+    this.#reservations =
+      new Map();
 
-    for (const reservation of reservations) {
+    for (
+      const reservation
+      of reservations
+    ) {
       assertPositiveInteger(
-        reservation.computeUnits,
+        reservation
+          .computeUnits,
         "reservation.computeUnits"
       );
 
       const normalized =
         Object.freeze({
-          reservationId: String(
-            reservation.reservationId
-          ),
-          taskId: String(
-            reservation.taskId
-          ),
-          taskClass: String(
-            reservation.taskClass
-          ),
-          privacy: String(
-            reservation.privacy
-          ),
+          reservationId:
+            String(
+              reservation
+                .reservationId
+            ),
+          taskId:
+            String(
+              reservation
+                .taskId
+            ),
+          taskClass:
+            String(
+              reservation
+                .taskClass
+            ),
+          privacy:
+            String(
+              reservation
+                .privacy
+            ),
           computeUnits:
-            reservation.computeUnits,
+            reservation
+              .computeUnits,
           issuedAt:
-            reservation.issuedAt ?? null,
+            reservation
+              .issuedAt ?? null,
           expiresAt:
-            reservation.expiresAt ?? null
+            reservation
+              .expiresAt ?? null
         });
 
-      this.#reservations.set(
-        normalized.reservationId,
-        normalized
-      );
+      this.#reservations
+        .set(
+          normalized
+            .reservationId,
+          normalized
+        );
     }
 
-    const reservationTotal = [
-      ...this.#reservations.values()
-    ].reduce(
-      (sum, item) =>
-        sum + item.computeUnits,
-      0
-    );
+    const reservationTotal =
+      [
+        ...this.#reservations
+          .values()
+      ].reduce(
+        (sum, item) =>
+          sum +
+          item.computeUnits,
+        0
+      );
 
     if (
       reservationTotal !==
@@ -414,12 +565,17 @@ export class BlindSponsorPool {
     }
   }
 
-  static fromSnapshot(snapshot) {
+  static fromSnapshot(
+    snapshot
+  ) {
     if (
-      snapshot?.schema !==
-        "sponsorrail.pool.v0.2" &&
-      snapshot?.schema !==
-        "sponsorrail.pool.v0.3"
+      ![
+        "sponsorrail.pool.v0.2",
+        "sponsorrail.pool.v0.3",
+        "sponsorrail.pool.v0.4"
+      ].includes(
+        snapshot?.schema
+      )
     ) {
       throw new Error(
         "unsupported SponsorRail pool snapshot schema"
@@ -429,33 +585,43 @@ export class BlindSponsorPool {
     return new BlindSponsorPool({
       id: snapshot.id,
       sponsorDisclosure:
-        snapshot.sponsorDisclosure,
+        snapshot
+          .sponsorDisclosure,
       balanceCredits:
-        snapshot.availableCredits,
+        snapshot
+          .availableCredits,
       reservedCredits:
-        snapshot.reservedCredits,
+        snapshot
+          .reservedCredits,
       spentCredits:
-        snapshot.spentCredits,
+        snapshot
+          .spentCredits,
       reservations:
-        snapshot.reservations ?? [],
+        snapshot
+          .reservations ??
+        [],
       ...snapshot.policy
     });
   }
 
   get balanceCredits() {
-    return this.#availableCredits;
+    return this
+      .#availableCredits;
   }
 
   get availableCredits() {
-    return this.#availableCredits;
+    return this
+      .#availableCredits;
   }
 
   get reservedCredits() {
-    return this.#reservedCredits;
+    return this
+      .#reservedCredits;
   }
 
   get spentCredits() {
-    return this.#spentCredits;
+    return this
+      .#spentCredits;
   }
 
   get totalCredits() {
@@ -481,7 +647,9 @@ export class BlindSponsorPool {
     } = {}
   ) {
     if (
-      containsForbiddenFundingKey(request)
+      containsForbiddenFundingKey(
+        request
+      )
     ) {
       throw new Error(
         "blind sponsor pool received forbidden private task data"
@@ -494,49 +662,99 @@ export class BlindSponsorPool {
     if (
       !decision.eligible ||
       this.#availableCredits <
-        request.computeRequested
+        request
+          .computeRequested
     ) {
       return null;
     }
 
     const reservation =
       Object.freeze({
-        reservationId: randomUUID(),
-        taskId: request.taskId,
-        taskClass: request.taskClass,
-        privacy: request.privacy,
+        reservationId:
+          randomUUID(),
+        taskId:
+          request.taskId,
+        taskClass:
+          request.taskClass,
+        privacy:
+          request.privacy,
         computeUnits:
-          request.computeRequested,
+          request
+            .computeRequested,
         issuedAt,
         expiresAt
       });
 
     this.#availableCredits -=
-      reservation.computeUnits;
+      reservation
+        .computeUnits;
 
     this.#reservedCredits +=
-      reservation.computeUnits;
+      reservation
+        .computeUnits;
 
     this.#reservations.set(
-      reservation.reservationId,
+      reservation
+        .reservationId,
       reservation
     );
 
     return reservation;
   }
 
-  getReservation(reservationId) {
+  getReservation(
+    reservationId
+  ) {
     return (
-      this.#reservations.get(
-        String(reservationId)
-      ) ?? null
+      this.#reservations
+        .get(
+          String(
+            reservationId
+          )
+        ) ?? null
     );
   }
 
   listReservations() {
     return [
-      ...this.#reservations.values()
+      ...this.#reservations
+        .values()
     ];
+  }
+
+  renewReservation(
+    reservationId,
+    expiresAt
+  ) {
+    const key =
+      String(
+        reservationId
+      );
+
+    const reservation =
+      this.#reservations
+        .get(key);
+
+    if (!reservation) {
+      throw new Error(
+        "unknown reservation"
+      );
+    }
+
+    const renewed =
+      Object.freeze({
+        ...reservation,
+        expiresAt:
+          String(expiresAt)
+      });
+
+    this.#reservations
+      .set(
+        key,
+        renewed
+      );
+
+    return renewed;
   }
 
   settle(
@@ -549,9 +767,12 @@ export class BlindSponsorPool {
     );
 
     const reservation =
-      this.#reservations.get(
-        String(reservationId)
-      );
+      this.#reservations
+        .get(
+          String(
+            reservationId
+          )
+        );
 
     if (!reservation) {
       throw new Error(
@@ -561,7 +782,8 @@ export class BlindSponsorPool {
 
     if (
       usedUnits >
-      reservation.computeUnits
+      reservation
+        .computeUnits
     ) {
       throw new Error(
         "settlement exceeds reserved compute"
@@ -569,11 +791,13 @@ export class BlindSponsorPool {
     }
 
     const refundUnits =
-      reservation.computeUnits -
+      reservation
+        .computeUnits -
       usedUnits;
 
     this.#reservedCredits -=
-      reservation.computeUnits;
+      reservation
+        .computeUnits;
 
     this.#spentCredits +=
       usedUnits;
@@ -581,47 +805,61 @@ export class BlindSponsorPool {
     this.#availableCredits +=
       refundUnits;
 
-    this.#reservations.delete(
-      reservation.reservationId
-    );
+    this.#reservations
+      .delete(
+        reservation
+          .reservationId
+      );
 
     return Object.freeze({
       reservedUnits:
-        reservation.computeUnits,
+        reservation
+          .computeUnits,
       usedUnits,
       refundUnits
     });
   }
 
-  release(reservationId) {
+  release(
+    reservationId
+  ) {
     const reservation =
-      this.#reservations.get(
-        String(reservationId)
-      );
+      this.#reservations
+        .get(
+          String(
+            reservationId
+          )
+        );
 
     if (!reservation) {
       return false;
     }
 
     this.#reservedCredits -=
-      reservation.computeUnits;
+      reservation
+        .computeUnits;
 
     this.#availableCredits +=
-      reservation.computeUnits;
+      reservation
+        .computeUnits;
 
-    this.#reservations.delete(
-      reservation.reservationId
-    );
+    this.#reservations
+      .delete(
+        reservation
+          .reservationId
+      );
 
     return true;
   }
 
   snapshot() {
     return Object.freeze({
-      schema: "sponsorrail.pool.v0.3",
+      schema:
+        "sponsorrail.pool.v0.4",
       id: this.id,
       sponsorDisclosure:
-        this.sponsorDisclosure,
+        this
+          .sponsorDisclosure,
       policy: {
         eligibleTaskClasses: [
           ...this.policy
@@ -636,15 +874,21 @@ export class BlindSponsorPool {
             .maxComputePerGrant
       },
       availableCredits:
-        this.#availableCredits,
+        this
+          .#availableCredits,
       reservedCredits:
-        this.#reservedCredits,
+        this
+          .#reservedCredits,
       spentCredits:
-        this.#spentCredits,
+        this
+          .#spentCredits,
       reservations: [
-        ...this.#reservations.values()
+        ...this.#reservations
+          .values()
       ].map(
-        (item) => ({ ...item })
+        (item) => ({
+          ...item
+        })
       )
     });
   }
@@ -652,9 +896,11 @@ export class BlindSponsorPool {
 
 export class FundingBroker {
   #grants;
+  #settlements;
   #now;
   #grantTtlMs;
   #receiptChain;
+  #receiptJournal;
 
   constructor(
     pools = [],
@@ -662,8 +908,10 @@ export class FundingBroker {
       store = null,
       grantTtlMs =
         DEFAULT_GRANT_TTL_MS,
-      now = () => Date.now(),
-      autoReconcile = true
+      now =
+        () => Date.now(),
+      autoReconcile =
+        true
     } = {}
   ) {
     assertPositiveInteger(
@@ -671,34 +919,53 @@ export class FundingBroker {
       "grantTtlMs"
     );
 
-    if (typeof now !== "function") {
+    if (
+      typeof now !== "function"
+    ) {
       throw new TypeError(
         "now must be a function"
       );
     }
 
     this.store = store;
+
     this.#grantTtlMs =
       grantTtlMs;
+
     this.#now = now;
-    this.#grants = new Map();
+
+    this.#grants =
+      new Map();
+
+    this.#settlements =
+      new Map();
+
     this.#receiptChain = {
       sequence: 0,
       headHash: null
     };
+
+    this.#receiptJournal =
+      [];
 
     if (
       pools.length === 0 &&
       this.store
     ) {
       const state =
-        this.store.loadState();
+        this.store
+          .loadState();
 
-      this.pools = state.pools.map(
-        BlindSponsorPool.fromSnapshot
-      );
+      this.pools =
+        state.pools.map(
+          BlindSponsorPool
+            .fromSnapshot
+        );
 
-      for (const grant of state.grants) {
+      for (
+        const grant
+        of state.grants
+      ) {
         if (
           containsForbiddenFundingKey(
             grant
@@ -710,11 +977,32 @@ export class FundingBroker {
         }
 
         this.#grants.set(
-          String(grant.grantId),
+          String(
+            grant.grantId
+          ),
           Object.freeze({
             ...grant
           })
         );
+      }
+
+      for (
+        const settlement
+        of (
+          state.settlements ??
+          []
+        )
+      ) {
+        this.#settlements
+          .set(
+            String(
+              settlement
+                .idempotencyKey
+            ),
+            Object.freeze({
+              ...settlement
+            })
+          );
       }
 
       this.#receiptChain = {
@@ -723,10 +1011,69 @@ export class FundingBroker {
             ?.sequence ?? 0,
         headHash:
           state.receiptChain
-            ?.headHash ?? null
+            ?.headHash ??
+          null
       };
+
+      this.#receiptJournal =
+        this.store
+          .loadReceiptJournal();
+
+      if (
+        this.#receiptJournal
+          .length > 0
+      ) {
+        if (
+          !verifyReceiptChain(
+            this.#receiptJournal
+          )
+        ) {
+          throw new Error(
+            "invalid receipt journal chain"
+          );
+        }
+
+        const tail =
+          this.#receiptJournal[
+            this.#receiptJournal
+              .length - 1
+          ];
+
+        if (
+          tail.chain
+            .sequence >
+          this.#receiptChain
+            .sequence
+        ) {
+          this.#receiptChain = {
+            sequence:
+              tail.chain
+                .sequence,
+            headHash:
+              tail.chain
+                .receiptHash
+          };
+
+          this.#persist();
+        } else if (
+          tail.chain
+            .sequence ===
+            this.#receiptChain
+              .sequence &&
+          tail.chain
+            .receiptHash !==
+            this.#receiptChain
+              .headHash
+        ) {
+          throw new Error(
+            "receipt journal conflicts with persisted chain head"
+          );
+        }
+      }
     } else {
-      this.pools = [...pools];
+      this.pools = [
+        ...pools
+      ];
     }
 
     if (autoReconcile) {
@@ -735,19 +1082,35 @@ export class FundingBroker {
   }
 
   #persist() {
-    if (!this.store) return;
+    if (!this.store) {
+      return;
+    }
 
     this.store.saveState({
-      pools: this.pools.map(
-        (pool) => pool.snapshot()
-      ),
+      pools:
+        this.pools.map(
+          (pool) =>
+            pool.snapshot()
+        ),
       grants: [
-        ...this.#grants.values()
+        ...this.#grants
+          .values()
       ].map(
-        (grant) => ({ ...grant })
+        (grant) => ({
+          ...grant
+        })
+      ),
+      settlements: [
+        ...this.#settlements
+          .values()
+      ].map(
+        (record) => ({
+          ...record
+        })
       ),
       receiptChain: {
-        ...this.#receiptChain
+        ...this
+          .#receiptChain
       }
     });
   }
@@ -755,13 +1118,31 @@ export class FundingBroker {
   #findPool(poolId) {
     return this.pools.find(
       (candidate) =>
-        candidate.id === poolId
+        candidate.id ===
+        poolId
+    );
+  }
+
+  #findSettlementForGrant(
+    grantId
+  ) {
+    return (
+      [
+        ...this.#settlements
+          .values()
+      ].find(
+        (record) =>
+          record.grantId ===
+          String(grantId)
+      ) ?? null
     );
   }
 
   authorize(task) {
     if (
-      task.allowSponsorship === false
+      task
+        .allowSponsorship ===
+      false
     ) {
       return Object.freeze({
         funded: false,
@@ -771,7 +1152,9 @@ export class FundingBroker {
     }
 
     const request =
-      sanitizeFundingRequest(task);
+      sanitizeFundingRequest(
+        task
+      );
 
     let lastPolicyReason =
       "NO_ELIGIBLE_SPONSOR_POOL";
@@ -792,13 +1175,21 @@ export class FundingBroker {
     const expiresAt =
       toIso(expiresAtMs);
 
-    for (const pool of this.pools) {
+    for (
+      const pool
+      of this.pools
+    ) {
       const decision =
-        pool.evaluate(request);
+        pool.evaluate(
+          request
+        );
 
-      if (!decision.eligible) {
+      if (
+        !decision.eligible
+      ) {
         lastPolicyReason =
           decision.reason;
+
         continue;
       }
 
@@ -814,32 +1205,41 @@ export class FundingBroker {
       if (!reservation) {
         lastPolicyReason =
           "INSUFFICIENT_SPONSOR_CREDITS";
+
         continue;
       }
 
       const grant =
         Object.freeze({
           funded: true,
-          grantId: randomUUID(),
-          poolId: pool.id,
+          grantId:
+            randomUUID(),
+          poolId:
+            pool.id,
           reservationId:
-            reservation.reservationId,
-          taskId: request.taskId,
+            reservation
+              .reservationId,
+          taskId:
+            request.taskId,
           taskClass:
             request.taskClass,
-          privacy: request.privacy,
+          privacy:
+            request.privacy,
           computeUnits:
-            reservation.computeUnits,
+            reservation
+              .computeUnits,
           sponsorDisclosure:
-            pool.sponsorDisclosure,
+            pool
+              .sponsorDisclosure,
           issuedAt,
           expiresAt
         });
 
-      this.#grants.set(
-        grant.grantId,
-        grant
-      );
+      this.#grants
+        .set(
+          grant.grantId,
+          grant
+        );
 
       this.#persist();
 
@@ -848,15 +1248,181 @@ export class FundingBroker {
 
     return Object.freeze({
       funded: false,
-      reason: lastPolicyReason
+      reason:
+        lastPolicyReason
     });
   }
 
-  settle(grant, usedUnits) {
+  heartbeat(
+    grant,
+    {
+      leaseMs =
+        this.#grantTtlMs
+    } = {}
+  ) {
+    assertPositiveInteger(
+      leaseMs,
+      "leaseMs"
+    );
+
     const known =
-      this.#grants.get(
-        String(grant?.grantId)
+      this.#grants
+        .get(
+          String(
+            grant?.grantId
+          )
+        );
+
+    if (!known) {
+      throw new Error(
+        "unknown grant"
       );
+    }
+
+    const nowMs =
+      normalizeTime(
+        this.#now(),
+        "now"
+      );
+
+    if (
+      isExpired(
+        known.expiresAt,
+        nowMs
+      )
+    ) {
+      this.release(known);
+
+      throw new Error(
+        "grant expired"
+      );
+    }
+
+    const currentExpiryMs =
+      Date.parse(
+        known.expiresAt
+      );
+
+    const renewedExpiryMs =
+      Math.max(
+        currentExpiryMs,
+        nowMs + leaseMs
+      );
+
+    const expiresAt =
+      toIso(
+        renewedExpiryMs
+      );
+
+    const renewed =
+      Object.freeze({
+        ...known,
+        expiresAt,
+        lastHeartbeatAt:
+          toIso(nowMs)
+      });
+
+    const pool =
+      this.#findPool(
+        known.poolId
+      );
+
+    if (!pool) {
+      throw new Error(
+        "grant pool unavailable"
+      );
+    }
+
+    pool.renewReservation(
+      known.reservationId,
+      expiresAt
+    );
+
+    this.#grants.set(
+      known.grantId,
+      renewed
+    );
+
+    this.#persist();
+
+    return renewed;
+  }
+
+  settle(
+    grant,
+    usedUnits,
+    {
+      idempotencyKey =
+        grant?.grantId
+    } = {}
+  ) {
+    assertNonNegativeInteger(
+      usedUnits,
+      "usedUnits"
+    );
+
+    if (!idempotencyKey) {
+      throw new TypeError(
+        "idempotencyKey is required"
+      );
+    }
+
+    const key =
+      String(
+        idempotencyKey
+      );
+
+    const byKey =
+      this.#settlements
+        .get(key);
+
+    if (byKey) {
+      if (
+        byKey.grantId !==
+          String(
+            grant?.grantId
+          ) ||
+        byKey.usedUnits !==
+          usedUnits
+      ) {
+        throw new Error(
+          "idempotency conflict"
+        );
+      }
+
+      return settlementResult(
+        byKey
+      );
+    }
+
+    const byGrant =
+      this
+        .#findSettlementForGrant(
+          grant?.grantId
+        );
+
+    if (byGrant) {
+      if (
+        byGrant.usedUnits !==
+        usedUnits
+      ) {
+        throw new Error(
+          "idempotency conflict"
+        );
+      }
+
+      return settlementResult(
+        byGrant
+      );
+    }
+
+    const known =
+      this.#grants
+        .get(
+          String(
+            grant?.grantId
+          )
+        );
 
     if (!known) {
       throw new Error(
@@ -900,20 +1466,56 @@ export class FundingBroker {
         usedUnits
       );
 
+    const record =
+      Object.freeze({
+        schema:
+          "sponsorrail.settlement.v0.4",
+        idempotencyKey:
+          key,
+        grantId:
+          known.grantId,
+        poolId:
+          known.poolId,
+        reservationId:
+          known
+            .reservationId,
+        reservedUnits:
+          settlement
+            .reservedUnits,
+        usedUnits:
+          settlement
+            .usedUnits,
+        refundUnits:
+          settlement
+            .refundUnits,
+        settledAt:
+          toIso(nowMs)
+      });
+
     this.#grants.delete(
       known.grantId
     );
 
+    this.#settlements.set(
+      key,
+      record
+    );
+
     this.#persist();
 
-    return settlement;
+    return settlementResult(
+      record
+    );
   }
 
   release(grant) {
     const known =
-      this.#grants.get(
-        String(grant?.grantId)
-      );
+      this.#grants
+        .get(
+          String(
+            grant?.grantId
+          )
+        );
 
     if (!known) {
       return false;
@@ -948,7 +1550,10 @@ export class FundingBroker {
     now = this.#now()
   } = {}) {
     const nowMs =
-      normalizeTime(now, "now");
+      normalizeTime(
+        now,
+        "now"
+      );
 
     const report = {
       expiredGrants: [],
@@ -958,6 +1563,7 @@ export class FundingBroker {
     };
 
     let changed = false;
+
     const referenced =
       new Set();
 
@@ -970,34 +1576,24 @@ export class FundingBroker {
           grant.poolId
         );
 
-      if (!pool) {
-        this.#grants.delete(
-          grantId
-        );
-
-        report.staleGrants.push(
-          grantId
-        );
-
-        changed = true;
-        continue;
-      }
-
-      const reservation =
-        pool.getReservation(
+      if (
+        !pool ||
+        !pool.getReservation(
           grant.reservationId
-        );
+        )
+      ) {
+        this.#grants
+          .delete(
+            grantId
+          );
 
-      if (!reservation) {
-        this.#grants.delete(
-          grantId
-        );
-
-        report.staleGrants.push(
-          grantId
-        );
+        report.staleGrants
+          .push(
+            grantId
+          );
 
         changed = true;
+
         continue;
       }
 
@@ -1008,18 +1604,22 @@ export class FundingBroker {
         )
       ) {
         pool.release(
-          grant.reservationId
+          grant
+            .reservationId
         );
 
-        this.#grants.delete(
-          grantId
-        );
+        this.#grants
+          .delete(
+            grantId
+          );
 
-        report.expiredGrants.push(
-          grantId
-        );
+        report.expiredGrants
+          .push(
+            grantId
+          );
 
         changed = true;
+
         continue;
       }
 
@@ -1028,50 +1628,62 @@ export class FundingBroker {
       );
     }
 
-    for (const pool of this.pools) {
+    for (
+      const pool
+      of this.pools
+    ) {
       for (
         const reservation
-        of pool.listReservations()
+        of pool
+          .listReservations()
       ) {
         const key =
           `${pool.id}:${reservation.reservationId}`;
 
         if (
-          referenced.has(key)
+          referenced.has(
+            key
+          )
         ) {
           continue;
         }
 
         const orphan = {
-          poolId: pool.id,
+          poolId:
+            pool.id,
           reservationId:
-            reservation.reservationId,
+            reservation
+              .reservationId,
           taskId:
-            reservation.taskId,
+            reservation
+              .taskId,
           expiresAt:
-            reservation.expiresAt ??
+            reservation
+              .expiresAt ??
             null
         };
 
         if (
           isExpired(
-            reservation.expiresAt,
+            reservation
+              .expiresAt,
             nowMs
           )
         ) {
           pool.release(
-            reservation.reservationId
+            reservation
+              .reservationId
           );
 
-          report.releasedOrphans.push(
-            orphan
-          );
+          report
+            .releasedOrphans
+            .push(orphan);
 
           changed = true;
         } else {
-          report.orphanReservations.push(
-            orphan
-          );
+          report
+            .orphanReservations
+            .push(orphan);
         }
       }
     }
@@ -1083,33 +1695,46 @@ export class FundingBroker {
     return Object.freeze({
       expiredGrants:
         Object.freeze([
-          ...report.expiredGrants
+          ...report
+            .expiredGrants
         ]),
       staleGrants:
         Object.freeze([
-          ...report.staleGrants
+          ...report
+            .staleGrants
         ]),
       orphanReservations:
         Object.freeze([
-          ...report.orphanReservations
+          ...report
+            .orphanReservations
         ]),
       releasedOrphans:
         Object.freeze([
-          ...report.releasedOrphans
+          ...report
+            .releasedOrphans
         ])
     });
   }
 
   receiptChainState() {
     return Object.freeze({
-      ...this.#receiptChain
+      ...this
+        .#receiptChain
     });
   }
 
-  linkReceipt(payload) {
+  receiptJournal() {
+    return Object.freeze([
+      ...this
+        .#receiptJournal
+    ]);
+  }
+
+  prepareReceipt(payload) {
     if (
       !payload ||
-      typeof payload !== "object"
+      typeof payload !==
+        "object"
     ) {
       throw new TypeError(
         "receipt payload is required"
@@ -1117,10 +1742,12 @@ export class FundingBroker {
     }
 
     const sequence =
-      this.#receiptChain.sequence + 1;
+      this.#receiptChain
+        .sequence + 1;
 
     const previousReceiptHash =
-      this.#receiptChain.headHash;
+      this.#receiptChain
+        .headHash;
 
     const receiptHash =
       computeReceiptHash(
@@ -1129,18 +1756,94 @@ export class FundingBroker {
         sequence
       );
 
-    this.#receiptChain = {
-      sequence,
-      headHash: receiptHash
-    };
-
-    this.#persist();
-
     return Object.freeze({
       sequence,
       previousReceiptHash,
       receiptHash
     });
+  }
+
+  commitReceipt(receipt) {
+    if (
+      !verifyReceiptHash(
+        receipt
+      )
+    ) {
+      throw new Error(
+        "invalid receipt hash"
+      );
+    }
+
+    if (
+      receipt.chain
+        .sequence ===
+        this.#receiptChain
+          .sequence &&
+      receipt.chain
+        .receiptHash ===
+        this.#receiptChain
+          .headHash
+    ) {
+      return Object.freeze({
+        ...receipt.chain
+      });
+    }
+
+    if (
+      receipt.chain
+        .sequence !==
+      this.#receiptChain
+        .sequence + 1
+    ) {
+      throw new Error(
+        "receipt sequence conflict"
+      );
+    }
+
+    if (
+      (
+        receipt.chain
+          .previousReceiptHash ??
+        null
+      ) !==
+      this.#receiptChain
+        .headHash
+    ) {
+      throw new Error(
+        "receipt chain conflict"
+      );
+    }
+
+    if (this.store) {
+      this.store
+        .appendReceipt(
+          receipt
+        );
+    }
+
+    this.#receiptJournal
+      .push(receipt);
+
+    this.#receiptChain = {
+      sequence:
+        receipt.chain
+          .sequence,
+      headHash:
+        receipt.chain
+          .receiptHash
+    };
+
+    this.#persist();
+
+    return Object.freeze({
+      ...receipt.chain
+    });
+  }
+
+  linkReceipt(payload) {
+    return this.prepareReceipt(
+      payload
+    );
   }
 }
 
@@ -1148,19 +1851,22 @@ export function createReceiptKeyPair() {
   const {
     publicKey,
     privateKey
-  } = generateKeyPairSync(
-    "ed25519"
-  );
+  } =
+    generateKeyPairSync(
+      "ed25519"
+    );
 
   return {
-    publicKey: publicKey.export({
-      type: "spki",
-      format: "pem"
-    }),
-    privateKey: privateKey.export({
-      type: "pkcs8",
-      format: "pem"
-    })
+    publicKey:
+      publicKey.export({
+        type: "spki",
+        format: "pem"
+      }),
+    privateKey:
+      privateKey.export({
+        type: "pkcs8",
+        format: "pem"
+      })
   };
 }
 
@@ -1174,7 +1880,9 @@ export function signReceipt(
   const signature =
     cryptoSign(
       null,
-      Buffer.from(canonical),
+      Buffer.from(
+        canonical
+      ),
       privateKey
     );
 
@@ -1182,11 +1890,13 @@ export function signReceipt(
     ...payload,
     signature:
       Object.freeze({
-        algorithm: "Ed25519",
+        algorithm:
+          "Ed25519",
         value:
-          signature.toString(
-            "base64"
-          )
+          signature
+            .toString(
+              "base64"
+            )
       })
   });
 }
@@ -1197,7 +1907,8 @@ export function verifyReceipt(
 ) {
   if (
     receipt?.signature
-      ?.algorithm !== "Ed25519"
+      ?.algorithm !==
+    "Ed25519"
   ) {
     return false;
   }
@@ -1207,12 +1918,13 @@ export function verifyReceipt(
     ...payload
   } = receipt;
 
-  const canonical =
-    canonicalJson(payload);
-
   return cryptoVerify(
     null,
-    Buffer.from(canonical),
+    Buffer.from(
+      canonicalJson(
+        payload
+      )
+    ),
     publicKey,
     Buffer.from(
       signature.value,
@@ -1227,15 +1939,18 @@ export function verifyReceiptHash(
   if (
     !receipt?.chain ||
     !Number.isInteger(
-      receipt.chain.sequence
+      receipt.chain
+        .sequence
     ) ||
-    !receipt.chain.receiptHash
+    !receipt.chain
+      .receiptHash
   ) {
     return false;
   }
 
   const {
-    signature: _signature,
+    signature:
+      _signature,
     chain,
     ...payload
   } = receipt;
@@ -1243,7 +1958,8 @@ export function verifyReceiptHash(
   const expected =
     computeReceiptHash(
       payload,
-      chain.previousReceiptHash ??
+      chain
+        .previousReceiptHash ??
         null,
       chain.sequence
     );
@@ -1258,7 +1974,9 @@ export function verifyReceiptChain(
   receipts
 ) {
   if (
-    !Array.isArray(receipts) ||
+    !Array.isArray(
+      receipts
+    ) ||
     receipts.length === 0
   ) {
     return false;
@@ -1266,22 +1984,32 @@ export function verifyReceiptChain(
 
   let previous =
     receipts[0].chain
-      ?.previousReceiptHash ?? null;
+      ?.previousReceiptHash ??
+    null;
 
   let sequence =
     receipts[0].chain
-      ?.sequence ?? null;
+      ?.sequence ??
+    null;
 
   if (
-    !Number.isInteger(sequence)
+    !Number.isInteger(
+      sequence
+    )
   ) {
     return false;
   }
 
-  for (const receipt of receipts) {
+  for (
+    const receipt
+    of receipts
+  ) {
     if (
-      !verifyReceiptHash(receipt) ||
-      receipt.chain.sequence !==
+      !verifyReceiptHash(
+        receipt
+      ) ||
+      receipt.chain
+        .sequence !==
         sequence ||
       (
         receipt.chain
@@ -1293,7 +2021,8 @@ export function verifyReceiptChain(
     }
 
     previous =
-      receipt.chain.receiptHash;
+      receipt.chain
+        .receiptHash;
 
     sequence += 1;
   }
@@ -1309,7 +2038,8 @@ export async function executeSponsoredTask({
 }) {
   if (
     !broker ||
-    typeof broker.authorize !==
+    typeof broker
+      .authorize !==
       "function"
   ) {
     throw new TypeError(
@@ -1318,7 +2048,8 @@ export async function executeSponsoredTask({
   }
 
   if (
-    typeof runner !== "function"
+    typeof runner !==
+    "function"
   ) {
     throw new TypeError(
       "runner is required"
@@ -1326,7 +2057,9 @@ export async function executeSponsoredTask({
   }
 
   const grant =
-    broker.authorize(task);
+    broker.authorize(
+      task
+    );
 
   if (!grant.funded) {
     return Object.freeze({
@@ -1336,7 +2069,9 @@ export async function executeSponsoredTask({
   }
 
   const modelContext =
-    buildModelContext(task);
+    buildModelContext(
+      task
+    );
 
   const authorization =
     buildExecutionAuthorization(
@@ -1348,16 +2083,20 @@ export async function executeSponsoredTask({
   let settlement;
 
   try {
-    result = await runner(
-      Object.freeze({
-        modelContext,
-        authorization
-      })
-    );
+    result =
+      await runner(
+        Object.freeze({
+          modelContext,
+          authorization
+        })
+      );
 
-    computeUnitsUsed = Number(
-      result?.computeUnitsUsed ?? 0
-    );
+    computeUnitsUsed =
+      Number(
+        result
+          ?.computeUnitsUsed ??
+        0
+      );
 
     if (
       !Number.isInteger(
@@ -1365,7 +2104,8 @@ export async function executeSponsoredTask({
       ) ||
       computeUnitsUsed < 0 ||
       computeUnitsUsed >
-        authorization.computeUnits
+        authorization
+          .computeUnits
     ) {
       throw new Error(
         "runner reported invalid compute usage"
@@ -1375,37 +2115,48 @@ export async function executeSponsoredTask({
     settlement =
       broker.settle(
         grant,
-        computeUnitsUsed
+        computeUnitsUsed,
+        {
+          idempotencyKey:
+            `run:${grant.grantId}`
+        }
       );
   } catch (error) {
     broker.release(grant);
+
     throw error;
   }
 
   const receiptPayload = {
     schema:
-      "sponsorrail.receipt.v0.3",
+      "sponsorrail.receipt.v0.4",
     runId: randomUUID(),
-    taskId: String(task.id),
-    taskClass: String(
-      task.taskClass ??
-        "software-development"
-    ),
-    grantId: grant.grantId,
+    taskId:
+      String(task.id),
+    taskClass:
+      String(
+        task.taskClass ??
+          "software-development"
+      ),
+    grantId:
+      grant.grantId,
     grantIssuedAt:
       grant.issuedAt,
     grantExpiresAt:
       grant.expiresAt,
     computeUnitsAuthorized:
-      authorization.computeUnits,
+      authorization
+        .computeUnits,
     computeUnitsUsed,
     computeUnitsRefunded:
-      settlement.refundUnits,
+      settlement
+        .refundUnits,
     userCostCredits: 0,
     sponsorContributionCredits:
       computeUnitsUsed,
     sponsorDisclosure:
-      grant.sponsorDisclosure,
+      grant
+        .sponsorDisclosure,
     privacy: {
       promptDisclosedToSponsor:
         false,
@@ -1424,14 +2175,17 @@ export async function executeSponsoredTask({
     },
     evidence: {
       modelContextSha256:
-        sha256Json(modelContext)
+        sha256Json(
+          modelContext
+        )
     },
     completed:
-      result?.completed === true
+      result?.completed ===
+      true
   };
 
   const chain =
-    broker.linkReceipt(
+    broker.prepareReceipt(
       receiptPayload
     );
 
@@ -1449,6 +2203,10 @@ export async function executeSponsoredTask({
       : Object.freeze(
           chainedPayload
         );
+
+  broker.commitReceipt(
+    receipt
+  );
 
   return Object.freeze({
     status: "COMPLETED",

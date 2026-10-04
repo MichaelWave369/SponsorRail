@@ -1,65 +1,37 @@
-# Accounting and reservation semantics
+# Accounting and settlement semantics
 
-SponsorRail uses reserve-then-settle accounting with durable grant leases.
+SponsorRail uses reserve-then-settle accounting.
 
-## Why reservation matters
-
-Charging the full requested amount at authorization time would overcharge sponsors whenever an agent finishes early or fails before consuming its budget. SponsorRail separates permission to consume compute from actual settled use.
-
-## State transitions
-
-For a pool with 100 credits and a task requesting 25:
+## Balance invariant
 
 ```text
-AVAILABLE 100 | RESERVED 0  | SPENT 0
-       authorize 25
-AVAILABLE 75  | RESERVED 25 | SPENT 0
-       use 17 and settle
-AVAILABLE 83  | RESERVED 0  | SPENT 17
+available + reserved + spent = total funded credits
 ```
 
-If the runner fails before valid settlement:
+Authorization moves credits from available to reserved. Settlement moves actual usage to spent and refunds unused capacity.
 
-```text
-AVAILABLE 75  | RESERVED 25 | SPENT 0
-       release
-AVAILABLE 100 | RESERVED 0  | SPENT 0
-```
+## Idempotent settlement
 
-## Durable authorization
+Distributed systems sometimes perform the work correctly and then lose the response. Retrying must not spend the same sponsor credits twice.
 
-v0.3 persists the active grant and its reservation together in the same store document. A restarted broker can recover the grant and settle it later.
+v0.4 persists settlement records containing the idempotency key, grant ID, pool ID, reservation ID, reserved units, used units, refunded units, and settlement time.
 
-## Lease expiry
+A replay with the same grant and usage returns the original result. A replay that attempts to change usage is rejected as an idempotency conflict.
 
-Every new grant has `issuedAt` and `expiresAt`. Reconciliation releases expired grants so abandoned work cannot reserve sponsor funds forever.
+## Lease renewal
 
-The reference lease is fixed at authorization time. Heartbeat and renewal semantics are not yet implemented.
+Grant heartbeats update the expiry of both the durable grant and its pool reservation. Heartbeat does not change the reserved compute amount.
 
-## Orphan handling
+An expired grant cannot be renewed.
 
-An orphan reservation is a reservation without a matching durable grant.
+## Failure behavior
 
-SponsorRail handles orphans conservatively:
+- runner failure before settlement: release full reservation
+- invalid compute report: release full reservation
+- expired grant: release reservation
+- valid settlement retry: return prior result, charge nothing more
+- conflicting settlement retry: reject
 
-- unexpired orphan: report and retain
-- expired orphan: release and refund
+## Current boundary
 
-This avoids turning a transient persistence inconsistency into premature reclamation.
-
-## Invariants
-
-- authorization cannot spend credits
-- settlement cannot exceed reserved compute
-- unused reserved compute returns to available balance
-- failed or invalid execution is not charged
-- active grants survive restart
-- expired grants cannot settle
-- expired grants release reserved credits
-- unexpired orphans are not silently reclaimed
-- expired orphans are reclaimed
-- blind persistence excludes prompt, repository context, source, and output
-
-## Current limitation
-
-The JSON store is still single-process. Durable state solves restart recovery, not distributed consensus. Multi-process concurrency and transactional database adapters remain future work.
+The reference JSON store is single-process. Idempotency is durable across normal restart, but not yet implemented on a database transaction with multi-writer concurrency guarantees.
