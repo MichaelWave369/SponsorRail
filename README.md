@@ -10,9 +10,48 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
-## v0.4 — live settlement and durable receipts
+## v0.5 — transactional SQLite concurrency
 
-v0.4 hardens three failure boundaries:
+v0.5 adds a second backend for workloads that need real multi-connection accounting guarantees while preserving the existing JSON reference backend.
+
+The new SQLite backend adds:
+
+- WAL-backed persistent accounting
+- `BEGIN IMMEDIATE` write serialization
+- atomic reserve / settle / release operations
+- conditional balance updates that cannot overspend a pool
+- durable idempotent settlements across independent broker connections
+- database-backed receipt sequencing
+- independent-worker concurrency tests
+
+The original JSON backend remains available for simple local/reference use.
+
+### Runtime compatibility
+
+- Node 20+: JSON reference backend
+- Node 22.5+: optional SQLite transactional backend via `loadSqliteBackend()`
+
+### Concurrency invariant
+
+Two independent workers competing for the same credits must never both win when the pool cannot fund both.
+
+```text
+pool = 30 credits
+
+worker A requests 20
+worker B requests 20
+
+exactly one reservation succeeds
+
+remaining:
+available 10
+reserved 20
+spent 0
+```
+
+### Previous v0.4 guarantees remain
+
+v0.4 hardened three failure boundaries:
 
 1. **Live work can renew its lease.**
 2. **Settlement is idempotent.**
@@ -97,6 +136,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Accounting](docs/accounting.md)
 - [Durable grants](docs/durable-grants.md)
 - [Live settlement](docs/live-settlement.md)
+- [SQLite backend](docs/sqlite-backend.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -105,9 +145,10 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.4 boundaries
+### Known v0.5 boundaries
 
-- the JSON state store remains single-process
+- the JSON state store remains single-process by design
+- the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
 - heartbeats are caller-driven; there is no worker heartbeat daemon
 - receipt journaling is append-only at the application level, not WORM storage
 - settlement records are durable but not yet backed by a transactional database

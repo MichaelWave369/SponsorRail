@@ -98,3 +98,16 @@ sponsorrail.receipt.v0.4
 and retain grant and task identifiers, authorized/used/refunded compute, sponsor disclosure, privacy and inference assertions, a model-context hash, chain sequence, previous receipt hash, receipt hash, and optional Ed25519 signature.
 
 The receipt journal is evidence of runtime ordering and tamper detection. It is not a public transparency log, confidential-compute proof, or hardware-backed attestation.
+
+
+## Transactional backend semantics
+
+A conforming transactional SponsorRail backend must provide the following atomicity properties:
+
+1. A successful grant reservation decrements available credits and increments reserved credits in the same transaction that records the durable grant.
+2. A failed reservation leaves all balances unchanged.
+3. Settlement moves actual usage to spent credits, refunds unused reserved credits, deletes the active grant, and records the idempotent settlement atomically.
+4. Two concurrent writers cannot both reserve credits that exceed the same pool balance.
+5. Receipt sequence allocation and receipt persistence occur in one transaction.
+
+The v0.5 SQLite backend implements these properties with SQLite WAL mode and `BEGIN IMMEDIATE`.

@@ -17,3 +17,7 @@ export {
   JsonPoolStore,
   POOL_STORE_SCHEMA
 } from "./store.js";
+
+export async function loadSqliteBackend() {
+  return import("./sqlite.js");
+}
