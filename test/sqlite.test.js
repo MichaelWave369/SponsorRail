@@ -57,7 +57,7 @@ function runAuthorizeWorker(
       const worker =
         new Worker(
           new URL(
-            "./helpers/sqlite-authorize-worker.mjs",
+            "../scripts/test-workers/sqlite-authorize-worker.mjs",
             import.meta.url
           ),
           {
