@@ -4,35 +4,69 @@
 
 > **Someone can pay for your AI to work. Nobody buys the right to tell it what to think.**
 
-SponsorRail follows one rule:
-
 ## FUNDING != AUTHORITY
 
 Money may grant compute. Money may not grant control.
 
-Instead of forcing users to watch intrusive ads, SponsorRail treats sponsorship as a compute grant. A company, community, patron, or public-interest fund can pay for agent work while the funding plane remains separated from the agent's private execution context.
+SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
-## v0.3 durable-grants rung
+## v0.4 — live settlement and durable receipts
 
-SponsorRail v0.3 makes sponsored-compute authorization survive process failure instead of relying on an in-memory grant map.
+v0.4 hardens three failure boundaries:
 
-It adds:
+1. **Live work can renew its lease.**
+2. **Settlement is idempotent.**
+3. **Completed receipts are appended to a durable journal.**
 
-- durable grant records
-- grant issue and expiry timestamps
-- restart recovery of active grants
-- settlement of a pre-restart grant after recovery
-- lease-style grant expiration
-- automatic release of expired reservations
-- orphan-reservation detection
-- conservative handling of unexpired orphans
-- automatic reclamation of expired orphans
-- migration of v0.2 pool-store documents
-- persistent receipt-chain head and sequence
-- hash-linked v0.3 receipts
-- receipt-hash and chain verification helpers
+### Grant heartbeat
 
-A grant can now be authorized, persisted, recovered by a new broker process, and settled without losing accounting continuity.
+Active workers can renew a grant without changing its authority or compute ceiling.
+
+```text
+grant expires 01.100
+       |
+heartbeat at 01.080
+       |
+renew to 01.280
+```
+
+The matching reservation receives the same expiry. An already-expired grant cannot be revived.
+
+### Idempotent settlement
+
+A settlement can be retried after a lost response or process restart.
+
+```text
+settle grant G / 17 units / key K
+        |
+        v
+17 units charged
+
+network response disappears
+
+retry grant G / 17 units / key K
+        |
+        v
+same result
+0 additional units charged
+```
+
+SponsorRail also prevents the same grant from being charged twice under a different idempotency key.
+
+### Append-only receipt journal
+
+v0.3 persisted only the receipt-chain head. v0.4 also writes completed receipts to an NDJSON journal.
+
+Each receipt remains hash-linked and may be Ed25519 signed.
+
+```text
+receipt 1 -> receipt 2 -> receipt 3
+    |          |           |
+    +----------+-----------+
+        append-only journal
+```
+
+If the state document lags behind a successfully appended journal entry, the broker recovers the chain head from the journal on restart.
 
 ## Quick start
 
@@ -45,81 +79,15 @@ npm run demo
 
 No third-party runtime dependencies are required.
 
-## Reference flow
+## Current qualification
 
-```text
-Sponsor / Patron
-      |
-      | funds compute pool
-      v
-+-----------------------+
-| SponsorRail Broker    |
-| durable grant ledger  |
-+-----------------------+
-      |
-      | reserve + persist grant lease
-      v
-+-----------------------+        private task        +----------------+
-| Execution Gate        | -------------------------> | Agent Runtime  |
-+-----------------------+                            +----------------+
-      ^                                                      |
-      |                                                      |
-      +------------ settle actual use / refund -------------+
-                             |
-                             v
-                     hash-linked receipt
-                             |
-                             v
-                   persistent chain head
-```
-
-Sponsor attribution exists in the funding and receipt planes. It does **not** enter model context.
-
-## Durable grant example
-
-```text
-pool: 100 available
-
-authorize 25
-  available 75
-  reserved 25
-  durable grant written
-
-broker process exits
-
-new broker starts
-  pool recovered
-  active grant recovered
-
-settle 17
-  available 83
-  reserved 0
-  spent 17
-```
-
-If a grant lease expires before settlement, reconciliation releases its reservation. If a reservation exists without a matching durable grant, SponsorRail reports it as an orphan. An unexpired orphan is preserved conservatively; an expired orphan is reclaimed.
-
-## Receipt continuity
-
-Each v0.3 receipt contains:
-
-- a monotonically increasing sequence number
-- the previous receipt hash
-- its own receipt hash
-- optional Ed25519 signature
-
-The chain head and sequence are persisted independently of full receipt contents, so the next receipt after a normal broker restart continues the prior chain.
+The v0.4 reference implementation covers blind funding-request isolation, sponsor-free execution context, policy matching, reserve/settle/refund accounting, failure rollback, durable grants, restart settlement, lease expiry and orphan reconciliation, heartbeat renewal, idempotent settlement across restart, v0.3 state migration, hash-linked receipts, a durable append-only receipt journal, journal-to-state recovery, receipt signatures, and tamper verification.
 
 ## Privacy boundary
 
-Persistent v0.3 state contains only funding-plane information such as pool accounting, task ID, coarse task class, privacy mode, grant metadata, and receipt-chain hashes.
+SponsorRail persistent state and receipts may contain coarse funding information such as task ID, task class, grant IDs, sponsor disclosure, compute usage, lease times, and hashes.
 
-It does not persist through SponsorRail:
-
-- prompt text
-- repository context
-- source code
-- model output
+SponsorRail does not persist through these funding structures: prompt text, repository context, source code, or model output.
 
 ## Documentation
 
@@ -128,24 +96,22 @@ It does not persist through SponsorRail:
 - [Protocol](docs/protocol.md)
 - [Accounting](docs/accounting.md)
 - [Durable grants](docs/durable-grants.md)
+- [Live settlement](docs/live-settlement.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
 
 **Experimental / pre-alpha.**
 
-SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee. Current receipt assertions demonstrate reference-runtime behavior; they are not hardware-backed attestations.
+SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.3 boundaries
+### Known v0.4 boundaries
 
-- the JSON store is single-process and does not provide database-grade concurrent transactions
-- grant leases expire but cannot yet be renewed or heartbeated
-- receipt-chain state is durable, but the reference implementation does not persist a complete append-only receipt log
-- production key rotation, fraud resistance, payment settlement, and provider attestation remain future work
-
-## Roadmap
-
-Natural next rungs include grant heartbeat/renewal, append-only receipt journals, idempotent settlement, stronger concurrency controls, provider adapters, privacy-preserving eligibility, fraud resistance, and production-grade key management while preserving the rule that funding never grants authority over agent cognition.
+- the JSON state store remains single-process
+- heartbeats are caller-driven; there is no worker heartbeat daemon
+- receipt journaling is append-only at the application level, not WORM storage
+- settlement records are durable but not yet backed by a transactional database
+- production key rotation, provider settlement, fraud resistance, and hardware-backed attestation remain future work
 
 ## License
 
