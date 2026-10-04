@@ -102,3 +102,16 @@ Local inference, confidential-compute providers, or future zero-knowledge usage 
 The reference adapter is provider-neutral. Future adapters can map real provider telemetry into the signed usage schema, including local Ollama-style runtimes, hosted model APIs, GPU job schedulers, CI systems, browser agents, and build/deploy services.
 
 A real adapter should never trust client-supplied usage when provider-side metering is available.
+
+
+## First concrete adapter: Ollama
+
+`OllamaChatProvider` is SponsorRail's first real provider adapter.
+
+It composes the generic signed-provider layer with Ollama's local chat endpoint and preserves the same provider receipt format.
+
+The adapter intentionally defaults to loopback-only operation. This makes the easiest configuration also the most private configuration.
+
+The provider sees the execution context because it performs inference. It does not receive sponsor identity or sponsor instructions.
+
+Generated tokens are billed because Ollama can enforce an output ceiling before generation. Prompt token counts remain visible in returned metering telemetry for later pricing research.
