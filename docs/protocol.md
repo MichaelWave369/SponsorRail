@@ -1,4 +1,4 @@
-# Sponsored Compute Protocol v0.2
+# Sponsored Compute Protocol v0.3
 
 This document describes the reference message shapes. It is not yet a stable standard.
 
@@ -28,9 +28,9 @@ No prompt, repository content, source code, output, or user identity is allowed 
 
 Policy matching operates only on fields already allowed into the funding plane.
 
-## Reservation
+## Reservation lease
 
-When a pool accepts a request, requested compute moves from `availableCredits` to `reservedCredits`. It is not yet counted as spent.
+When a pool accepts a request, requested compute moves from `availableCredits` to `reservedCredits`.
 
 ```json
 {
@@ -38,11 +38,15 @@ When a pool accepts a request, requested compute moves from `availableCredits` t
   "taskId": "task-001",
   "taskClass": "software-development",
   "privacy": "blind",
-  "computeUnits": 2500
+  "computeUnits": 2500,
+  "issuedAt": "2026-10-04T21:00:00.000Z",
+  "expiresAt": "2026-10-04T21:05:00.000Z"
 }
 ```
 
-## Broker grant
+Authorization is not spending.
+
+## Durable broker grant
 
 ```json
 {
@@ -50,12 +54,17 @@ When a pool accepts a request, requested compute moves from `availableCredits` t
   "grantId": "broker-generated-uuid",
   "poolId": "oss-pool",
   "reservationId": "pool-generated-uuid",
+  "taskId": "task-001",
+  "taskClass": "software-development",
+  "privacy": "blind",
   "computeUnits": 2500,
-  "sponsorDisclosure": "ExampleCloud"
+  "sponsorDisclosure": "ExampleCloud",
+  "issuedAt": "2026-10-04T21:00:00.000Z",
+  "expiresAt": "2026-10-04T21:05:00.000Z"
 }
 ```
 
-The full grant remains in the funding plane.
+The durable grant remains in the funding plane and is persisted with pool state.
 
 ## Execution authorization
 
@@ -67,6 +76,27 @@ The full grant remains in the funding plane.
 ```
 
 This is the only funding-derived object passed into the execution plane.
+
+## Recovery
+
+A broker started with an empty pool list and a configured store reconstructs:
+
+- pool balances and reservations
+- active durable grants
+- receipt-chain sequence and head hash
+
+Recovered active grants can be settled or released using the same grant ID.
+
+## Reconciliation
+
+Reconciliation checks:
+
+1. grants whose pool no longer exists
+2. grants whose reservation no longer exists
+3. expired grants
+4. reservations without a matching grant
+
+Expired grants release their reservations. Unexpired orphan reservations are reported and retained. Expired orphan reservations are released.
 
 ## Settlement
 
@@ -82,10 +112,22 @@ If 1700 of 2500 reserved units are used:
 
 The pool moves 1700 units to `spentCredits` and returns 800 to `availableCredits`.
 
-If execution throws or usage is invalid, the reference broker releases the reservation in full.
+## Receipt chain
 
-## Receipt
+Receipts use schema identifier `sponsorrail.receipt.v0.3`.
 
-Receipts use schema identifier `sponsorrail.receipt.v0.2`. They record authorized, used, and refunded compute; user cost; sponsor contribution; disclosure text; privacy assertions; inference assertions; completion state; and an Ed25519 signature when signing is enabled.
+```json
+{
+  "chain": {
+    "sequence": 42,
+    "previousReceiptHash": "hex-or-null",
+    "receiptHash": "hex"
+  }
+}
+```
 
-The receipt is evidence of reference-runtime behavior, not proof of confidential computing. Stronger attestation mechanisms remain future work.
+The receipt hash commits to the receipt payload, previous receipt hash, and sequence. The broker persists only the latest chain sequence and head hash. Receipts may additionally carry an Ed25519 signature.
+
+`verifyReceiptHash` checks one receipt's hash commitment. `verifyReceiptChain` checks hash integrity and adjacency for an ordered receipt set.
+
+The chain is evidence of ordering and tamper detection in the reference runtime. It is not hardware-backed attestation or a public transparency log.
