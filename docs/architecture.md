@@ -77,3 +77,29 @@ If the journal append succeeds but state persistence lags, startup recovery can 
 The v0.4 JSON state contains pool snapshots, active durable grants, completed settlement records, and the receipt-chain head. A separate NDJSON file contains completed receipts.
 
 The reference implementation remains single-process and does not claim distributed transactions.
+
+
+## Storage backends
+
+SponsorRail now has two storage paths.
+
+### JSON reference backend
+
+The JSON backend is intentionally simple and single-process. It is useful for examples, local development, protocol inspection, and environments where concurrent writers are not required.
+
+### SQLite transactional backend
+
+The SQLite backend is loaded lazily on Node 22.5+.
+
+It uses:
+
+- WAL mode
+- `BEGIN IMMEDIATE` for write transactions
+- conditional pool balance updates
+- unique settlement constraints
+- foreign keys
+- durable receipt sequencing
+
+The SQLite database is authoritative for pool balances, active grants, settlements, and receipt-chain state. Independent broker instances can open separate connections to the same database and coordinate through SQLite transaction locking.
+
+This backend does not change the cognition boundary. Sponsor identity, prompt text, repository context, source code, and model output remain outside the execution authorization.
