@@ -103,3 +103,29 @@ It uses:
 The SQLite database is authoritative for pool balances, active grants, settlements, and receipt-chain state. Independent broker instances can open separate connections to the same database and coordinate through SQLite transaction locking.
 
 This backend does not change the cognition boundary. Sponsor identity, prompt text, repository context, source code, and model output remain outside the execution authorization.
+
+
+## Compute-provider plane
+
+v0.6 introduces an explicit provider boundary between execution and settlement.
+
+```text
+private execution context
+        |
+        v
+SignedComputeProvider
+        |
+        | result stays with caller
+        | signed coarse usage only
+        v
+ProviderRegistry verification
+        |
+        v
+SponsorRail settlement
+```
+
+The provider execution envelope contains only the private model context and opaque execution authorization. Sponsor disclosure and sponsor instructions are excluded.
+
+The provider signs coarse metering evidence. SponsorRail uses the registered public key to verify the usage statement before charging a sponsor pool.
+
+This does not make a remote provider blind to the prompt. It makes the **sponsor** blind to the prompt and makes provider-reported usage auditable.

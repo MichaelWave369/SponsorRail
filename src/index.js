@@ -21,3 +21,11 @@ export {
 export async function loadSqliteBackend() {
   return import("./sqlite.js");
 }
+
+export {
+  ProviderRegistry,
+  SignedComputeProvider,
+  createProviderKeyPair,
+  executeSponsoredProviderTask,
+  verifyProviderUsageReceipt
+} from "./provider.js";
