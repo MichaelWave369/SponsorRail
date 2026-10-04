@@ -46,3 +46,34 @@ Mitigation: reported usage above the authorized amount is rejected.
 - production key management
 
 These are explicit future qualification gates, not implied guarantees.
+
+
+## Compute-provider threats added in v0.6
+
+### Provider over-reporting
+
+Threat: a provider claims more usage than was authorized.
+
+Mitigation: usage receipts are grant-bound and rejected when used units exceed the authorization ceiling.
+
+### Forged provider identity
+
+Threat: an untrusted actor submits a signed-looking usage record.
+
+Mitigation: SponsorRail accepts only Ed25519 receipts from operator-registered provider public keys.
+
+### Receipt substitution
+
+Threat: a valid provider receipt from one grant is replayed against another.
+
+Mitigation: verification binds provider usage to the exact grant ID and authorized compute amount.
+
+### Provider result leakage into sponsor evidence
+
+Threat: prompt, source, or model output is copied into funding receipts.
+
+Mitigation: provider usage receipts use an explicit coarse schema and SponsorRail stores only a SHA-256 commitment to that receipt.
+
+### Remote-provider privacy
+
+A remote compute provider may necessarily receive the execution context. v0.6 does not claim confidential inference. Sponsor privacy and provider privacy are separate trust boundaries.
