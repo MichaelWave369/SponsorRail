@@ -111,3 +111,47 @@ A conforming transactional SponsorRail backend must provide the following atomic
 5. Receipt sequence allocation and receipt persistence occur in one transaction.
 
 The v0.5 SQLite backend implements these properties with SQLite WAL mode and `BEGIN IMMEDIATE`.
+
+
+## Signed compute-provider usage
+
+v0.6 defines a provider usage receipt:
+
+```json
+{
+  "schema": "sponsorrail.provider-usage.v0.6",
+  "usageId": "uuid",
+  "providerId": "provider.example",
+  "grantId": "grant-uuid",
+  "usageMetric": "compute-units",
+  "modelClass": "provider-model-class",
+  "computeUnitsAuthorized": 2500,
+  "computeUnitsUsed": 1700,
+  "completed": true,
+  "startedAt": "2026-10-04T22:00:00.000Z",
+  "completedAt": "2026-10-04T22:01:00.000Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "value": "base64"
+  }
+}
+```
+
+Before settlement, SponsorRail verifies:
+
+1. the provider is registered and enabled
+2. the Ed25519 signature is valid
+3. the receipt's grant ID matches the execution authorization
+4. the authorized-unit field matches the grant
+5. used units are a non-negative integer no greater than authorized units
+6. the usage metric matches the operator-registered provider contract
+
+The provider receipt does not include prompt text, repository contents, source code, or model output.
+
+The SponsorRail receipt commits to the provider receipt by SHA-256 and records whether signature verification succeeded.
+
+### Provider trust boundary
+
+A compute provider is not a sponsor.
+
+The provider may receive private execution context when needed to perform computation. SponsorRail prevents sponsor metadata from crossing into that execution envelope. Provider privacy and retention policy are therefore separate from sponsor privacy and must be evaluated independently.
