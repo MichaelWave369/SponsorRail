@@ -702,6 +702,117 @@ DO UPDATE SET
       );
   }
 
+  #holdDeficitCredits(
+    campaignId
+  ) {
+    const row =
+      this.#db
+        .prepare(`
+SELECT COALESCE(SUM(unfunded_credits), 0) AS credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+`)
+        .get(
+          String(campaignId)
+        );
+
+    return Number(
+      row.credits
+    );
+  }
+
+  #heldCredits(
+    campaignId
+  ) {
+    const row =
+      this.#db
+        .prepare(`
+SELECT COALESCE(SUM(held_credits), 0) AS credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+`)
+        .get(
+          String(campaignId)
+        );
+
+    return Number(
+      row.credits
+    );
+  }
+
+  #coverHoldDeficits(
+    campaignId,
+    credits
+  ) {
+    let remaining =
+      credits;
+
+    let covered = 0;
+
+    const rows =
+      this.#db
+        .prepare(`
+SELECT hold_id, held_credits, unfunded_credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+  AND unfunded_credits > 0
+ORDER BY placed_at, hold_id
+`)
+        .all(
+          String(campaignId)
+        );
+
+    for (
+      const row
+      of rows
+    ) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      const pay =
+        Math.min(
+          remaining,
+          Number(
+            row.unfunded_credits
+          )
+        );
+
+      this.#db
+        .prepare(`
+UPDATE funding_holds
+SET held_credits =
+      held_credits + ?,
+    unfunded_credits =
+      unfunded_credits - ?
+WHERE hold_id = ?
+  AND status = 'active'
+`)
+        .run(
+          pay,
+          pay,
+          String(
+            row.hold_id
+          )
+        );
+
+      remaining -= pay;
+      covered += pay;
+    }
+
+    return Object.freeze({
+      covered,
+      remaining,
+      outstandingHoldCredits:
+        this.#holdDeficitCredits(
+          campaignId
+        )
+    });
+  }
+
   #creditPool(
     poolId,
     credits
@@ -711,43 +822,31 @@ DO UPDATE SET
       "credits"
     );
 
-    if (credits === 0) {
-      return Object.freeze({
-        availableAdded: 0,
-        liabilityPaid: 0,
-        outstandingLiabilityCredits:
-          this.#campaignIdForPool(
-            poolId
-          )
-            ? this.#liabilityCredits(
-                this.#campaignIdForPool(
-                  poolId
-                )
-              )
-            : 0
-      });
-    }
-
     const campaignId =
       this.#campaignIdForPool(
         poolId
       );
 
     if (!campaignId) {
-      this.#db
-        .prepare(
-          "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
-        )
-        .run(
-          credits,
-          String(poolId)
-        );
+      if (credits > 0) {
+        this.#db
+          .prepare(
+            "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
+          )
+          .run(
+            credits,
+            String(poolId)
+          );
+      }
 
       return Object.freeze({
         availableAdded:
           credits,
         liabilityPaid: 0,
+        holdCoverageAdded: 0,
         outstandingLiabilityCredits:
+          0,
+        outstandingHoldCredits:
           0
       });
     }
@@ -763,15 +862,24 @@ DO UPDATE SET
         liability
       );
 
-    const availableAdded =
-      credits -
-      liabilityPaid;
-
     this.#setLiabilityCredits(
       campaignId,
       liability -
         liabilityPaid
     );
+
+    const afterLiability =
+      credits -
+      liabilityPaid;
+
+    const holdCoverage =
+      this.#coverHoldDeficits(
+        campaignId,
+        afterLiability
+      );
+
+    const availableAdded =
+      holdCoverage.remaining;
 
     if (availableAdded > 0) {
       this.#db
@@ -787,9 +895,14 @@ DO UPDATE SET
     return Object.freeze({
       availableAdded,
       liabilityPaid,
+      holdCoverageAdded:
+        holdCoverage.covered,
       outstandingLiabilityCredits:
         liability -
-        liabilityPaid
+        liabilityPaid,
+      outstandingHoldCredits:
+        holdCoverage
+          .outstandingHoldCredits
     });
   }
 
