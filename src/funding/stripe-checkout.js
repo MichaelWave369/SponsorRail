@@ -557,6 +557,17 @@ export class StripeCheckoutFundingAdapter {
       );
     }
 
+    const occurredAt =
+      Number.isInteger(
+        session.created
+      )
+        ? session.created * 1000
+        : Number.isInteger(
+            event.created
+          )
+          ? event.created * 1000
+          : Number(this.now());
+
     const depositReceipt =
       this.source
         .issueDeposit({
@@ -566,7 +577,8 @@ export class StripeCheckoutFundingAdapter {
           depositId:
             `stripe-checkout:${session.id}`,
           externalReference:
-            `stripe-checkout:${session.id}`
+            `stripe-checkout:${session.id}`,
+          occurredAt
         });
 
     return Object.freeze({
@@ -587,6 +599,40 @@ export class StripeCheckoutFundingAdapter {
       }),
       credits,
       depositReceipt
+    });
+  }
+
+  handleAndDeposit({
+    rawBody,
+    signatureHeader,
+    broker,
+    fundingSourceRegistry
+  }) {
+    if (
+      !broker ||
+      typeof broker.depositCampaign !==
+        "function"
+    ) {
+      throw new TypeError(
+        "broker with depositCampaign() is required"
+      );
+    }
+
+    const mapped =
+      this.handleWebhook({
+        rawBody,
+        signatureHeader
+      });
+
+    const deposit =
+      broker.depositCampaign(
+        mapped.depositReceipt,
+        fundingSourceRegistry
+      );
+
+    return Object.freeze({
+      ...mapped,
+      deposit
     });
   }
 }
