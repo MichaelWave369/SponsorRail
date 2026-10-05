@@ -202,3 +202,32 @@ reverse + dispute_loss
 A release returns quarantined credits through the normal liability/hold allocation gate.
 
 A reverse converts the hold into a permanent reversal. Any part of the hold that could not originally be quarantined becomes permanent campaign liability.
+
+
+## Funding-source reconciliation v0.17
+
+A trusted funding source can issue a signed statement representing its own SponsorRail-credit view for one campaign as of one timestamp.
+
+The statement reports:
+
+```text
+depositedCredits
+reversedCredits
+activeHoldCredits
+```
+
+`activeHoldCredits` is total unresolved hold exposure, not only the portion currently quarantined from available balance.
+
+SponsorRail verifies the funding-source signature before comparison.
+
+### Reconciliation is read-only
+
+A reconciliation mismatch never changes campaign balances.
+
+It is persisted as evidence for operator review or a later explicit corrective workflow.
+
+### Historical comparison
+
+Reconciliation queries deposits and reversals up to the statement's `asOf` time.
+
+Active holds are reconstructed from hold placement and resolution timestamps, so a hold that was open at statement time remains part of that historical comparison even if it has since resolved.
