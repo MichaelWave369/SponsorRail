@@ -17,6 +17,8 @@ import {
 
 import {
   verifyFundingDeposit,
+  verifyFundingHold,
+  verifyFundingHoldResolution,
   verifyFundingReversal
 } from "./funding.js";
 
@@ -472,6 +474,36 @@ CREATE TABLE IF NOT EXISTS campaign_funding_liabilities (
   outstanding_credits INTEGER NOT NULL CHECK (outstanding_credits >= 0)
 );
 
+CREATE TABLE IF NOT EXISTS funding_holds (
+  hold_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  original_deposit_id TEXT NOT NULL REFERENCES funding_deposits(deposit_id) ON DELETE RESTRICT,
+  campaign_id TEXT NOT NULL REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  asset TEXT NOT NULL,
+  credits INTEGER NOT NULL CHECK (credits > 0),
+  held_credits INTEGER NOT NULL CHECK (held_credits >= 0),
+  unfunded_credits INTEGER NOT NULL CHECK (unfunded_credits >= 0),
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'released', 'reversed')),
+  external_reference TEXT,
+  placed_at TEXT NOT NULL,
+  place_receipt_hash TEXT NOT NULL UNIQUE,
+  place_receipt_json TEXT NOT NULL,
+  CHECK (held_credits + unfunded_credits = credits)
+);
+
+CREATE TABLE IF NOT EXISTS funding_hold_resolutions (
+  resolution_id TEXT PRIMARY KEY,
+  hold_id TEXT NOT NULL UNIQUE REFERENCES funding_holds(hold_id) ON DELETE RESTRICT,
+  source_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('release', 'reverse')),
+  reason TEXT NOT NULL,
+  external_reference TEXT,
+  occurred_at TEXT NOT NULL,
+  receipt_hash TEXT NOT NULL UNIQUE,
+  receipt_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settlements (
   idempotency_key TEXT PRIMARY KEY,
   grant_id TEXT NOT NULL UNIQUE,
@@ -525,6 +557,20 @@ CREATE INDEX IF NOT EXISTS idx_funding_reversals_deposit
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_reversals_external_reference
   ON funding_reversals(source_id, external_reference)
+  WHERE external_reference IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_funding_holds_campaign
+  ON funding_holds(campaign_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_funding_holds_deposit
+  ON funding_holds(original_deposit_id, status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_holds_external_reference
+  ON funding_holds(source_id, external_reference)
+  WHERE external_reference IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_hold_resolutions_external_reference
+  ON funding_hold_resolutions(source_id, external_reference)
   WHERE external_reference IS NOT NULL;
 
 INSERT OR IGNORE INTO meta(key, value)
