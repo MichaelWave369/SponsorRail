@@ -629,3 +629,57 @@ permanent reversals
 ```
 
 This prevents a provisional hold and a permanent reversal from independently claiming the same funding twice.
+
+
+## Signed funding statement v0.17
+
+```json
+{
+  "schema": "sponsorrail.funding-statement.v0.17",
+  "statementId": "statement-uuid",
+  "sourceId": "source.example",
+  "campaignId": "campaign-1",
+  "asset": "compute-credits",
+  "depositedCredits": 2500,
+  "reversedCredits": 200,
+  "activeHoldCredits": 300,
+  "asOf": "2026-10-05T06:00:00.000Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "value": "base64"
+  }
+}
+```
+
+Constraints:
+
+```text
+depositedCredits >= 0
+reversedCredits >= 0
+activeHoldCredits >= 0
+reversedCredits <= depositedCredits
+activeHoldCredits <= depositedCredits - reversedCredits
+```
+
+The statement is source-specific and campaign-specific.
+
+### Reconciliation report
+
+`reconcileFundingStatement()` persists:
+
+```text
+statement identity
+statement hash
+external totals
+local totals as-of statement time
+per-field deltas
+matched boolean
+report hash
+recorded time
+```
+
+Exact signed-statement replay is idempotent.
+
+A different signed payload reusing the same statement ID is an idempotency conflict.
+
+Reconciliation reports never alter funding balances.
