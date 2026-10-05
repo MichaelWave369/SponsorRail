@@ -139,3 +139,16 @@ Routing never examines the user prompt.
 The default selection score rewards an eligible/available provider, preferred locality, lower cost, and operator priority. Privacy, capability, compute-limit, and cost-limit failures disqualify a provider rather than merely lowering its score.
 
 Applications can inspect the candidate list to explain why a provider was or was not eligible.
+
+
+## Provider retry contract
+
+v0.9 adds `ProviderUnavailableError`.
+
+Provider adapters should use this only when they can reasonably assert that retrying elsewhere is safe.
+
+Examples that may be classified retry-safe by an adapter include explicit capacity rejection or service-unavailable responses.
+
+Timeouts and transport ambiguity should remain ordinary errors unless the adapter has stronger evidence.
+
+The Ollama adapter currently classifies HTTP 429, 502, 503, and 504 responses as retry-safe availability failures. Request timeouts remain ambiguous.

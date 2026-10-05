@@ -11,6 +11,35 @@ import {
   verifyReceipt
 } from "./sponsorrail.js";
 
+export class ProviderUnavailableError extends Error {
+  constructor(
+    message,
+    {
+      code =
+        "PROVIDER_UNAVAILABLE"
+    } = {}
+  ) {
+    super(message);
+
+    this.name =
+      "ProviderUnavailableError";
+
+    this.code =
+      String(code);
+
+    this.safeToRetry =
+      true;
+  }
+}
+
+export function isSafeProviderRetry(
+  error
+) {
+  return (
+    error?.safeToRetry === true
+  );
+}
+
 function canonicalize(value) {
   if (Array.isArray(value)) {
     return value.map(canonicalize);
@@ -487,7 +516,7 @@ export async function executeSponsoredProviderTask({
 
   const receiptPayload = {
     schema:
-      "sponsorrail.receipt.v0.6",
+      "sponsorrail.receipt.v0.9",
     runId:
       randomUUID(),
     taskId:
@@ -578,7 +607,28 @@ export async function executeSponsoredProviderTask({
             eligibleCount:
               Number(
                 routingDecision.eligibleCount
-              )
+              ),
+            selectedCircuitState:
+              String(
+                routingDecision.selectedCircuitState ??
+                "CLOSED"
+              ),
+            attemptCount:
+              Number(
+                routingDecision.attemptCount ??
+                1
+              ),
+            failoverUsed:
+              routingDecision.failoverUsed ===
+                true,
+            failedProviderIds:
+              Object.freeze([
+                ...(
+                  routingDecision
+                    .failedProviderIds ??
+                  []
+                )
+              ].map(String))
           }
         : null,
     provider: {

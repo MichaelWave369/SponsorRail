@@ -95,3 +95,40 @@ This lets the router prefer a working local model and fall back before sponsor c
 ## Future work
 
 Later routing layers can add provider latency history, cost conversion, operator policy, confidential-compute capability, model-quality classes, and multi-provider failover while preserving the same content-blind routing boundary.
+
+
+## Safe failover and health memory
+
+v0.9 adds provider health to the routing eligibility layer.
+
+An open circuit is a hard eligibility failure with reason:
+
+```text
+CIRCUIT_OPEN
+```
+
+The router does not probe an open provider, reducing repeated load on an already failing dependency.
+
+A half-open provider can be probed and selected, but receives a small deterministic score penalty until it proves a successful execution.
+
+### Failover execution
+
+`executeRoutedSponsoredTask()` now accepts:
+
+```js
+maxAttempts
+```
+
+The default is three attempts, bounded by the number of eligible providers.
+
+Only errors explicitly marked safe to retry advance to the next provider.
+
+Each failed retry-safe attempt releases its sponsor reservation before the next attempt begins.
+
+### Why timeouts do not automatically fail over
+
+A timeout does not prove the provider did no work. The remote side may have completed inference while the response was lost.
+
+Automatically retrying that task could duplicate real compute even if SponsorRail's internal credits were refunded.
+
+v0.9 therefore treats ambiguous timeouts and generic network failures as non-retry-safe unless an adapter can prove otherwise.

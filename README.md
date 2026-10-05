@@ -10,6 +10,68 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.9 — safe provider failover and circuit breaking
+
+v0.9 makes routing resilient without turning retries into accidental duplicate compute.
+
+The rule is intentionally conservative:
+
+> **Automatic failover happens only when a provider failure is explicitly safe to retry.**
+
+A provider can signal retry-safe unavailability with `ProviderUnavailableError`. Generic timeouts, network ambiguity, and unknown failures do not automatically rerun the task.
+
+### Health memory
+
+`ProviderHealthTracker` records coarse provider health:
+
+- successes
+- failures
+- consecutive failures
+- last failure code
+- last success/failure timestamps
+- circuit-open expiry
+
+After a configurable failure threshold, the provider circuit opens and routing skips that provider without probing it. After cooldown the provider becomes half-open and may be tested again.
+
+### Safe failover flow
+
+```text
+provider A selected
+      |
+      v
+explicit retry-safe failure
+      |
+      +-> reservation released
+      +-> health failure recorded
+      |
+      v
+provider B selected
+      |
+      v
+signed usage + settlement
+```
+
+An ambiguous failure instead stops:
+
+```text
+provider A timeout / uncertain outcome
+      |
+      v
+reservation released
+      |
+      X no automatic duplicate execution
+```
+
+### Receipt evidence
+
+Successful failover receipts can record the selected provider, attempt count, whether failover was used, and failed provider IDs. Raw error text is not copied into receipts.
+
+### Demo
+
+```bash
+npm run demo:failover
+```
+
 ## v0.8 — provider discovery and routing
 
 v0.8 adds a privacy-preserving router above the provider layer.
@@ -278,6 +340,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Compute providers](docs/providers.md)
 - [Ollama adapter](docs/ollama.md)
 - [Provider routing](docs/routing.md)
+- [Safe failover](docs/failover.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -286,13 +349,15 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.8 boundaries
+### Known v0.9 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
 - heartbeats are caller-driven; there is no worker heartbeat daemon
 - receipt journaling is append-only at the application level, not WORM storage
 - JSON settlement records remain single-process; the SQLite backend provides transactional settlement and receipt sequencing
+- provider health memory is process-local in v0.9 and resets on restart
+- safe failover requires an explicit retry-safe provider error
 - routing scores are deterministic policy heuristics, not learned recommendations
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7

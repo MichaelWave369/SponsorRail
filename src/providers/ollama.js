@@ -1,4 +1,5 @@
 import {
+  ProviderUnavailableError,
   SignedComputeProvider
 } from "../provider.js";
 
@@ -370,6 +371,24 @@ export class OllamaChatProvider
         }
 
         if (!response?.ok) {
+          const status =
+            Number(
+              response?.status
+            );
+
+          if (
+            [429, 502, 503, 504]
+              .includes(status)
+          ) {
+            throw new ProviderUnavailableError(
+              `Ollama request failed with HTTP ${status}`,
+              {
+                code:
+                  `OLLAMA_HTTP_${status}`
+              }
+            );
+          }
+
           throw new Error(
             `Ollama request failed with HTTP ${response?.status ?? "unknown"}`
           );

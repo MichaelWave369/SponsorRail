@@ -235,3 +235,63 @@ Provider eligibility is checked before sponsor authorization. A request with no 
 ### Ollama discovery
 
 The Ollama adapter may probe `GET /api/tags` to determine whether its configured model is installed. Full discovery payloads remain local to routing and are not copied into receipts.
+
+
+## Safe failover v0.9
+
+SponsorRail distinguishes retry-safe provider unavailability from ambiguous execution failure.
+
+A provider may raise a retry-safe error carrying:
+
+```text
+safeToRetry = true
+code = PROVIDER_SPECIFIC_CODE
+```
+
+The reference `ProviderUnavailableError` provides this contract.
+
+### Failover rule
+
+Automatic failover is allowed only when all of the following are true:
+
+1. the selected provider failed
+2. the error is explicitly marked `safeToRetry=true`
+3. another eligible provider remains
+4. the caller's `maxAttempts` limit has not been reached
+
+The failed attempt releases its sponsor reservation before another provider is authorized.
+
+Generic errors are treated as ambiguous and stop execution.
+
+### Circuit breaker
+
+Provider health state is one of:
+
+```text
+CLOSED
+OPEN
+HALF_OPEN
+```
+
+After the configured consecutive-failure threshold, the circuit enters `OPEN` until its cooldown expires.
+
+Open circuits are routing-ineligible and are not probed.
+
+After cooldown, the circuit becomes `HALF_OPEN`. A successful execution returns it to `CLOSED`; another failure can reopen it.
+
+### Routing receipt evidence
+
+v0.9 routing evidence may include:
+
+```json
+{
+  "schema": "sponsorrail.routing.v0.9",
+  "selectedProviderId": "provider.backup",
+  "attemptCount": 2,
+  "failoverUsed": true,
+  "failedProviderIds": ["provider.primary"],
+  "selectedCircuitState": "CLOSED"
+}
+```
+
+Raw provider error messages are intentionally excluded.
