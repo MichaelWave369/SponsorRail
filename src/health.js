@@ -35,7 +35,9 @@ function freezeStatus(value) {
     lastSuccessAt:
       value.lastSuccessAt,
     circuitOpenUntil:
-      value.circuitOpenUntil
+      value.circuitOpenUntil,
+    halfOpenLeaseUntil:
+      value.halfOpenLeaseUntil
   });
 }
 
@@ -109,7 +111,8 @@ export class ProviderHealthTracker {
           lastFailureCode: null,
           lastFailureAt: null,
           lastSuccessAt: null,
-          circuitOpenUntil: null
+          circuitOpenUntil: null,
+          halfOpenLeaseUntil: null
         }
       );
     }
@@ -188,6 +191,8 @@ export class ProviderHealthTracker {
         .toISOString();
     state.circuitOpenUntil =
       null;
+    state.halfOpenLeaseUntil =
+      null;
     state.lastFailureCode =
       null;
 
@@ -231,7 +236,91 @@ export class ProviderHealthTracker {
           nowMs +
           this.#cooldownMs
         ).toISOString();
+
+      state.halfOpenLeaseUntil =
+        null;
     }
+
+    return this.status(
+      providerId
+    );
+  }
+
+  tryAcquireHalfOpen(
+    providerId,
+    {
+      leaseMs = 10_000
+    } = {}
+  ) {
+    if (
+      !Number.isInteger(
+        leaseMs
+      ) ||
+      leaseMs <= 0
+    ) {
+      throw new TypeError(
+        "leaseMs must be a positive integer"
+      );
+    }
+
+    const state =
+      this.#state(
+        providerId
+      );
+
+    const status =
+      this.status(
+        providerId
+      );
+
+    if (
+      status.state !==
+      "HALF_OPEN"
+    ) {
+      return false;
+    }
+
+    const nowMs =
+      normalizeNow(
+        this.#now()
+      );
+
+    const leaseUntilMs =
+      state
+        .halfOpenLeaseUntil
+        ? Date.parse(
+            state
+              .halfOpenLeaseUntil
+          )
+        : NaN;
+
+    if (
+      Number.isFinite(
+        leaseUntilMs
+      ) &&
+      leaseUntilMs > nowMs
+    ) {
+      return false;
+    }
+
+    state.halfOpenLeaseUntil =
+      new Date(
+        nowMs + leaseMs
+      ).toISOString();
+
+    return true;
+  }
+
+  releaseHalfOpen(
+    providerId
+  ) {
+    const state =
+      this.#state(
+        providerId
+      );
+
+    state.halfOpenLeaseUntil =
+      null;
 
     return this.status(
       providerId
