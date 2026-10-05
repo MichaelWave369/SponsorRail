@@ -224,3 +224,19 @@ If no hold exists for a final lost dispute, SponsorRail retains v0.15's conserva
 Hold placement uses the Dispute object's creation timestamp.
 
 Final hold resolution uses the closing Stripe Event timestamp when present, preserving the difference between when risk began and when it was resolved.
+
+
+## Reconciliation boundary
+
+v0.17 provides the generic signed-statement and reconciliation machinery that a Stripe account reconciliation adapter can use.
+
+The current Stripe Checkout adapter still does **not** fetch Stripe Balance, payout, charge, refund, or dispute history over the Stripe API.
+
+A future live adapter can:
+
+1. query authoritative Stripe records
+2. convert them under the immutable funding-source credit policy
+3. issue a signed SponsorRail funding statement
+4. submit that statement to `reconcileFundingStatement()`
+
+That separation keeps external API access out of the core ledger and prevents reconciliation mismatches from directly mutating campaign balances.
