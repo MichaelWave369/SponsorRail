@@ -170,3 +170,35 @@ If a reversal is larger than currently available campaign credits, SponsorRail d
 It does not reduce reserved credits or rewrite spent history.
 
 Returned reservations, settlement refunds, and new deposits flow through the same liability gate: liability is paid before credits become newly available.
+
+
+## Temporary funding holds v0.16
+
+A funding hold represents provisional loss exposure without claiming that the funding has permanently reversed.
+
+`SignedFundingSource.issueHold()` signs:
+
+- hold ID
+- source ID
+- original deposit ID
+- campaign ID
+- asset
+- credits
+- reason
+- optional external reference
+- occurrence timestamp
+
+A hold is bounded by the remaining unreversed and unheld portion of its original deposit.
+
+### Hold resolutions
+
+`issueHoldResolution()` supports two final outcomes:
+
+```text
+release + dispute_won
+reverse + dispute_loss
+```
+
+A release returns quarantined credits through the normal liability/hold allocation gate.
+
+A reverse converts the hold into a permanent reversal. Any part of the hold that could not originally be quarantined becomes permanent campaign liability.
