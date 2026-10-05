@@ -10,6 +10,61 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.8 — provider discovery and routing
+
+v0.8 adds a privacy-preserving router above the provider layer.
+
+The router evaluates only coarse execution requirements:
+
+- task class
+- privacy mode
+- requested compute
+- required capabilities
+- locality preference
+- maximum cost per unit
+
+It does **not** receive prompt text, repository context, source code, model output, or sponsor identity.
+
+Eligible providers are scored on availability, privacy compatibility, capability compatibility, locality, cost, and operator priority. The selected provider and coarse decision evidence are written into the SponsorRail receipt.
+
+### Routing flow
+
+```text
+private task
+   |
+   +-----------------------> execution context
+   |
+   +-> coarse routing request
+             |
+             v
+       ProviderRouter
+        /    |    \
+     local remote offline
+        \    |    /
+             v
+        selected provider
+             |
+             v
+      signed provider usage
+             |
+             v
+        SponsorRail settlement
+```
+
+### No provider, no reservation
+
+Provider discovery happens before sponsor authorization. If no provider qualifies, SponsorRail returns `NO_ELIGIBLE_PROVIDER` and sponsor credits remain untouched.
+
+### Ollama discovery
+
+`OllamaChatProvider.probe()` now checks Ollama's `/api/tags` endpoint and confirms that the configured model is installed before routing work to it.
+
+### Routing demo
+
+```bash
+npm run demo:routing
+```
+
 ## v0.7 — local-first Ollama provider
 
 v0.7 ships SponsorRail's first concrete compute-provider adapter.
@@ -222,6 +277,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [SQLite backend](docs/sqlite-backend.md)
 - [Compute providers](docs/providers.md)
 - [Ollama adapter](docs/ollama.md)
+- [Provider routing](docs/routing.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -230,13 +286,15 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.7 boundaries
+### Known v0.8 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
 - heartbeats are caller-driven; there is no worker heartbeat daemon
 - receipt journaling is append-only at the application level, not WORM storage
 - JSON settlement records remain single-process; the SQLite backend provides transactional settlement and receipt sequencing
+- routing scores are deterministic policy heuristics, not learned recommendations
+- provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work
 

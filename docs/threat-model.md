@@ -104,3 +104,36 @@ Mitigation: `num_predict` is clamped to the authorization ceiling and reported `
 Threat: a stalled Ollama request holds sponsor credits indefinitely.
 
 Mitigation: the adapter aborts after a configurable timeout and SponsorRail releases the reservation on provider failure.
+
+
+## Routing threats added in v0.8
+
+### Prompt leakage into routing
+
+Threat: provider selection becomes a hidden second consumer of private task text.
+
+Mitigation: the routing request is constructed from an explicit allowlist of coarse fields and excludes prompt/repository contents.
+
+### Sponsor-influenced provider selection
+
+Threat: sponsor identity changes which model/provider is selected.
+
+Mitigation: sponsor identity is absent from the routing request and router inputs.
+
+### Stale provider availability
+
+Threat: a provider passes discovery and becomes unavailable before execution.
+
+Mitigation: provider execution still fails closed and releases sponsor reservations. Discovery is treated as point-in-time evidence, not a guarantee.
+
+### Probe-data leakage
+
+Threat: provider discovery returns model inventories or infrastructure details that end up in public receipts.
+
+Mitigation: receipts record only coarse routing evidence. Raw probe payloads stay outside receipt construction.
+
+### Cost-only routing
+
+Threat: the cheapest provider is selected despite privacy or capability mismatch.
+
+Mitigation: privacy, capability, compute, and explicit cost limits are eligibility gates. Price affects ranking only among eligible providers.
