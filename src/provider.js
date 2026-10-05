@@ -607,7 +607,28 @@ export async function executeSponsoredProviderTask({
             eligibleCount:
               Number(
                 routingDecision.eligibleCount
-              )
+              ),
+            selectedCircuitState:
+              String(
+                routingDecision.selectedCircuitState ??
+                "CLOSED"
+              ),
+            attemptCount:
+              Number(
+                routingDecision.attemptCount ??
+                1
+              ),
+            failoverUsed:
+              routingDecision.failoverUsed ===
+                true,
+            failedProviderIds:
+              Object.freeze([
+                ...(
+                  routingDecision
+                    .failedProviderIds ??
+                  []
+                )
+              ].map(String))
           }
         : null,
     provider: {
