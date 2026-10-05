@@ -19,7 +19,8 @@ import {
   verifyFundingDeposit,
   verifyFundingHold,
   verifyFundingHoldResolution,
-  verifyFundingReversal
+  verifyFundingReversal,
+  verifyFundingStatement
 } from "./funding.js";
 
 const DEFAULT_GRANT_TTL_MS =
@@ -504,6 +505,18 @@ CREATE TABLE IF NOT EXISTS funding_hold_resolutions (
   receipt_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS funding_reconciliations (
+  statement_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  campaign_id TEXT NOT NULL REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  asset TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  matched INTEGER NOT NULL CHECK (matched IN (0, 1)),
+  report_hash TEXT NOT NULL UNIQUE,
+  report_json TEXT NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settlements (
   idempotency_key TEXT PRIMARY KEY,
   grant_id TEXT NOT NULL UNIQUE,
@@ -572,6 +585,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_holds_external_reference
 CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_hold_resolutions_external_reference
   ON funding_hold_resolutions(source_id, external_reference)
   WHERE external_reference IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_funding_reconciliations_campaign
+  ON funding_reconciliations(campaign_id, recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_funding_reconciliations_source
+  ON funding_reconciliations(source_id, recorded_at);
 
 INSERT OR IGNORE INTO meta(key, value)
   VALUES ('receipt_sequence', '0');
