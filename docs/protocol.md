@@ -189,3 +189,49 @@ This choice makes the charged quantity pre-authorizable through `num_predict`.
 Loopback hosts are permitted by default.
 
 Remote Ollama-compatible endpoints require explicit `allowRemote: true`. Non-loopback HTTP additionally requires explicit `allowInsecureRemote: true`; otherwise HTTPS is required.
+
+
+## Provider routing v0.8
+
+Routing operates on a sanitized request:
+
+```json
+{
+  "taskId": "task-001",
+  "taskClass": "software-development",
+  "privacy": "blind",
+  "computeRequested": 500,
+  "requiredCapabilities": ["chat", "code"],
+  "preferredLocality": "local",
+  "maxCostPerUnit": 1
+}
+```
+
+No prompt, repository context, source code, model output, sponsor identity, or provider probe payload is included.
+
+A routing decision records:
+
+```json
+{
+  "schema": "sponsorrail.routing.v0.8",
+  "selectedProviderId": "provider.local",
+  "score": 94.5,
+  "locality": "local",
+  "costPerUnit": 0,
+  "priority": 2,
+  "requiredCapabilities": ["chat", "code"],
+  "preferredLocality": "local",
+  "candidateCount": 3,
+  "eligibleCount": 2
+}
+```
+
+The decision may be embedded in the SponsorRail receipt as coarse selection evidence.
+
+### Qualification order
+
+Provider eligibility is checked before sponsor authorization. A request with no eligible provider must not reserve sponsor credits.
+
+### Ollama discovery
+
+The Ollama adapter may probe `GET /api/tags` to determine whether its configured model is installed. Full discovery payloads remain local to routing and are not copied into receipts.
