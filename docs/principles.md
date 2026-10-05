@@ -22,3 +22,22 @@ SponsorRail separates the funding plane from the execution plane so that a spons
 ## Product rule
 
 > Someone can pay for your AI to work. Nobody buys the right to tell it what to think.
+
+
+## Sponsor experience contract
+
+SponsorRail treats the following as protocol violations, not merely undesirable UI:
+
+- forced viewing
+- required clicks or engagement
+- countdown gates
+- autoplay
+- non-dismissible sponsor surfaces
+- prompt, repository, output, or identity access
+- sponsor instructions entering execution
+- sponsor-driven recommendation ranking
+- hidden data sharing
+
+Advertising may add value. It may not manufacture inconvenience.
+
+Contextual sponsorship is opt-in and may use only coarse task metadata already admitted to the funding plane.

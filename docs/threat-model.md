@@ -203,3 +203,36 @@ Mitigation: half-open leases expire automatically and may be reacquired after ex
 Threat: operational health storage becomes a side channel for private task content.
 
 Mitigation: durable health rows contain only provider IDs, counters, coarse failure codes, timestamps, and lease/circuit expiry values.
+
+
+## Sponsor-campaign threats added in v0.11
+
+### Manufactured inconvenience
+
+Threat: the free tier is deliberately made worse so sponsorship can sell relief.
+
+Mitigation: campaign validation rejects forced viewing, countdowns, required interaction, autoplay, and non-dismissible sponsor experiences.
+
+### Sponsor instruction injection
+
+Threat: sponsor copy or preferences become model instructions.
+
+Mitigation: sponsor instructions are prohibited by campaign validation, and execution authorization continues to contain only grant ID and compute units.
+
+### Behavioral targeting through prompts
+
+Threat: private prompt contents are analyzed to choose a sponsor.
+
+Mitigation: campaign matching receives only task class, privacy mode, compute request, and explicit user preferences. Contextual targeting is opt-in.
+
+### Recommendation capture
+
+Threat: sponsorship changes provider/model/product recommendations.
+
+Mitigation: campaign experience must declare `influence=none` and `rankingInfluence=false`; violations fail validation.
+
+### Hidden data exchange
+
+Threat: sponsorship silently trades user data for compute.
+
+Mitigation: v0.11 campaign contract requires `dataShared=none` and rejects prompt, repository, output, or identity access.

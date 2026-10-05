@@ -10,6 +10,62 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.11 — sponsored capability campaigns and non-coercion contract
+
+v0.11 turns the sponsor-side product rules into executable policy.
+
+A sponsor campaign now describes a useful capability grant rather than an interruption:
+
+```text
+Sponsor budget
+    |
+    v
+Campaign contract
+    |
+    +-- useful capability
+    +-- clear Sponsored disclosure
+    +-- dismissible
+    +-- no forced interaction
+    +-- no prompt/source/output access
+    +-- no ranking influence
+    |
+    v
+BlindSponsorPool
+    |
+    v
+ordinary SponsorRail grant
+```
+
+### Hard-rejected campaign behavior
+
+SponsorRail rejects campaigns that require clicks/viewing, disable dismissal, autoplay, countdown, manufacture forced viewing, request prompt/repository/output/identity access, share data, influence recommendations, or contain sponsor instructions.
+
+### Targeting modes
+
+- **universal** — no task-class targeting; may fund eligible work broadly
+- **contextual** — may match only coarse task classes and requires explicit user opt-in
+
+The prompt is never a campaign-matching input.
+
+### Receipt evidence
+
+Campaign-funded receipts can record campaign ID, capability type, benefit description, disclosure label, targeting mode, and the non-coercion assertions:
+
+```text
+interactionRequired = false
+dismissible = true
+dataShared = none
+influence = none
+```
+
+That evidence remains outside model context.
+
+### Demo
+
+```bash
+npm run demo:campaign
+```
+
 ## v0.10 — durable provider health and cross-process half-open leases
 
 v0.10 makes circuit state survive process restart and coordinates recovery across independent router processes.
@@ -391,6 +447,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Provider routing](docs/routing.md)
 - [Safe failover](docs/failover.md)
 - [Durable provider health](docs/health.md)
+- [Sponsor campaigns](docs/campaigns.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -399,7 +456,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.10 boundaries
+### Known v0.11 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
@@ -412,6 +469,7 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - routing scores are deterministic policy heuristics, not learned recommendations
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
+- campaign-aware persistence is currently implemented by the JSON/reference funding path; SQLite campaign columns are a future rung
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work
 
 ## License

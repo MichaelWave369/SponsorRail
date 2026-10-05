@@ -439,6 +439,7 @@ export class BlindSponsorPool {
     ],
     maxComputePerGrant =
       null,
+    campaign = null,
     reservedCredits = 0,
     spentCredits = 0,
     reservations = []
@@ -480,6 +481,70 @@ export class BlindSponsorPool {
         allowedPrivacyModes,
         maxComputePerGrant
       });
+
+    this.campaign =
+      campaign
+        ? Object.freeze({
+            schema:
+              String(
+                campaign.schema
+              ),
+            campaignId:
+              String(
+                campaign.campaignId
+              ),
+            capabilityType:
+              String(
+                campaign.capabilityType
+              ),
+            benefitDescription:
+              String(
+                campaign.benefitDescription
+              ),
+            disclosureLabel:
+              String(
+                campaign.disclosureLabel
+              ),
+            targetingMode:
+              String(
+                campaign.targetingMode
+              ),
+            interactionRequired:
+              campaign.interactionRequired ===
+                true,
+            dismissible:
+              campaign.dismissible ===
+                true,
+            dataShared:
+              String(
+                campaign.dataShared
+              ),
+            influence:
+              String(
+                campaign.influence
+              )
+          })
+        : null;
+
+    if (
+      this.campaign &&
+      (
+        this.campaign
+          .interactionRequired ||
+        !this.campaign
+          .dismissible ||
+        this.campaign
+          .dataShared !==
+            "none" ||
+        this.campaign
+          .influence !==
+            "none"
+      )
+    ) {
+      throw new Error(
+        "campaign violates SponsorRail funding contract"
+      );
+    }
 
     this.#availableCredits =
       balanceCredits;
@@ -572,7 +637,8 @@ export class BlindSponsorPool {
       ![
         "sponsorrail.pool.v0.2",
         "sponsorrail.pool.v0.3",
-        "sponsorrail.pool.v0.4"
+        "sponsorrail.pool.v0.4",
+        "sponsorrail.pool.v0.11"
       ].includes(
         snapshot?.schema
       )
@@ -600,6 +666,9 @@ export class BlindSponsorPool {
         snapshot
           .reservations ??
         [],
+      campaign:
+        snapshot.campaign ??
+        null,
       ...snapshot.policy
     });
   }
@@ -855,11 +924,17 @@ export class BlindSponsorPool {
   snapshot() {
     return Object.freeze({
       schema:
-        "sponsorrail.pool.v0.4",
+        "sponsorrail.pool.v0.11",
       id: this.id,
       sponsorDisclosure:
         this
           .sponsorDisclosure,
+      campaign:
+        this.campaign
+          ? {
+              ...this.campaign
+            }
+          : null,
       policy: {
         eligibleTaskClasses: [
           ...this.policy
@@ -1231,6 +1306,12 @@ export class FundingBroker {
           sponsorDisclosure:
             pool
               .sponsorDisclosure,
+          campaign:
+            pool.campaign
+              ? {
+                  ...pool.campaign
+                }
+              : null,
           issuedAt,
           expiresAt
         });
@@ -2144,7 +2225,7 @@ export async function executeSponsoredTask({
 
   const receiptPayload = {
     schema:
-      "sponsorrail.receipt.v0.10",
+      "sponsorrail.receipt.v0.11",
     runId: randomUUID(),
     taskId:
       String(task.id),
@@ -2172,6 +2253,12 @@ export async function executeSponsoredTask({
     sponsorDisclosure:
       grant
         .sponsorDisclosure,
+    campaign:
+      grant.campaign
+        ? {
+            ...grant.campaign
+          }
+        : null,
     privacy: {
       promptDisclosedToSponsor:
         false,
