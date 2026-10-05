@@ -562,6 +562,153 @@ WHERE id = ?
       .run(row.grant_id);
   }
 
+  #campaignRow(
+    campaignId
+  ) {
+    return this.#db
+      .prepare(
+        "SELECT * FROM sponsor_campaigns WHERE campaign_id = ?"
+      )
+      .get(
+        String(campaignId)
+      );
+  }
+
+  #campaignForPool(
+    poolId
+  ) {
+    const row =
+      this.#db
+        .prepare(
+          "SELECT * FROM sponsor_campaigns WHERE pool_id = ?"
+        )
+        .get(
+          String(poolId)
+        );
+
+    if (!row) {
+      return null;
+    }
+
+    return validateSponsorCampaign({
+      campaignId:
+        row.campaign_id,
+      sponsorDisclosure:
+        row.sponsor_disclosure,
+      capabilityType:
+        row.capability_type,
+      benefitDescription:
+        row.benefit_description,
+      disclosureLabel:
+        row.disclosure_label,
+      targetingMode:
+        row.targeting_mode,
+      budgetCredits:
+        Number(
+          row.budget_credits
+        ),
+      eligibleTaskClasses:
+        JSON.parse(
+          row.eligible_task_classes
+        ),
+      allowedPrivacyModes:
+        JSON.parse(
+          row.allowed_privacy_modes
+        ),
+      maxComputePerGrant:
+        row.max_compute_per_grant ===
+          null
+          ? null
+          : Number(
+              row.max_compute_per_grant
+            ),
+      priority:
+        Number(row.priority),
+      experience:
+        JSON.parse(
+          row.experience_json
+        )
+    });
+  }
+
+  #mintGrant(
+    row,
+    request,
+    issuedAt,
+    expiresAt,
+    campaign = null
+  ) {
+    const metadata =
+      campaign
+        ? campaignFundingMetadata(
+            campaign
+          )
+        : null;
+
+    const grant =
+      Object.freeze({
+        funded: true,
+        grantId:
+          randomUUID(),
+        poolId:
+          String(row.id),
+        reservationId:
+          randomUUID(),
+        taskId:
+          request.taskId,
+        taskClass:
+          request.taskClass,
+        privacy:
+          request.privacy,
+        computeUnits:
+          request.computeRequested,
+        sponsorDisclosure:
+          String(
+            row.sponsor_disclosure
+          ),
+        campaign:
+          metadata,
+        issuedAt,
+        expiresAt
+      });
+
+    this.#db
+      .prepare(`
+INSERT INTO grants (
+  grant_id,
+  pool_id,
+  reservation_id,
+  task_id,
+  task_class,
+  privacy,
+  compute_units,
+  sponsor_disclosure,
+  issued_at,
+  expires_at,
+  campaign_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+      .run(
+        grant.grantId,
+        grant.poolId,
+        grant.reservationId,
+        grant.taskId,
+        grant.taskClass,
+        grant.privacy,
+        grant.computeUnits,
+        grant.sponsorDisclosure,
+        grant.issuedAt,
+        grant.expiresAt,
+        metadata
+          ? JSON.stringify(
+              metadata
+            )
+          : null
+      );
+
+    return grant;
+  }
+
   createPool({
     id,
     sponsorDisclosure,
@@ -625,6 +772,161 @@ INSERT INTO sponsor_pools (
     return this.poolSnapshot(id);
   }
 
+  createCampaign(campaign) {
+    const normalized =
+      validateSponsorCampaign(
+        campaign
+      );
+
+    const poolId =
+      `campaign:${normalized.campaignId}`;
+
+    return this.#transaction(
+      () => {
+        this.#db
+          .prepare(`
+INSERT INTO sponsor_pools (
+  id,
+  sponsor_disclosure,
+  available_credits,
+  reserved_credits,
+  spent_credits,
+  eligible_task_classes,
+  allowed_privacy_modes,
+  max_compute_per_grant
+) VALUES (?, ?, ?, 0, 0, ?, ?, ?)
+`)
+          .run(
+            poolId,
+            normalized
+              .sponsorDisclosure,
+            normalized
+              .budgetCredits,
+            JSON.stringify(
+              normalized
+                .eligibleTaskClasses
+            ),
+            JSON.stringify(
+              normalized
+                .allowedPrivacyModes
+            ),
+            normalized
+              .maxComputePerGrant
+          );
+
+        this.#db
+          .prepare(`
+INSERT INTO sponsor_campaigns (
+  campaign_id,
+  pool_id,
+  sponsor_disclosure,
+  capability_type,
+  benefit_description,
+  disclosure_label,
+  targeting_mode,
+  budget_credits,
+  eligible_task_classes,
+  allowed_privacy_modes,
+  max_compute_per_grant,
+  priority,
+  experience_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+          .run(
+            normalized.campaignId,
+            poolId,
+            normalized
+              .sponsorDisclosure,
+            normalized
+              .capabilityType,
+            normalized
+              .benefitDescription,
+            normalized
+              .disclosureLabel,
+            normalized
+              .targetingMode,
+            normalized
+              .budgetCredits,
+            JSON.stringify(
+              normalized
+                .eligibleTaskClasses
+            ),
+            JSON.stringify(
+              normalized
+                .allowedPrivacyModes
+            ),
+            normalized
+              .maxComputePerGrant,
+            normalized.priority,
+            JSON.stringify(
+              normalized.experience
+            )
+          );
+
+        return this.campaignSnapshot(
+          normalized.campaignId
+        );
+      }
+    );
+  }
+
+  campaignSnapshot(
+    campaignId
+  ) {
+    const row =
+      this.#campaignRow(
+        campaignId
+      );
+
+    if (!row) {
+      return null;
+    }
+
+    const campaign =
+      this.#campaignForPool(
+        row.pool_id
+      );
+
+    return Object.freeze({
+      ...publicCampaign(
+        campaign
+      ),
+      schema:
+        "sponsorrail.sqlite-campaign.v0.12",
+      budgetCredits:
+        campaign.budgetCredits,
+      eligibleTaskClasses:
+        campaign
+          .eligibleTaskClasses,
+      allowedPrivacyModes:
+        campaign
+          .allowedPrivacyModes,
+      maxComputePerGrant:
+        campaign
+          .maxComputePerGrant,
+      pool:
+        this.poolSnapshot(
+          row.pool_id
+        )
+    });
+  }
+
+  listCampaigns() {
+    return Object.freeze(
+      this.#db
+        .prepare(
+          "SELECT campaign_id FROM sponsor_campaigns ORDER BY priority DESC, campaign_id"
+        )
+        .all()
+        .map(
+          (row) =>
+            this.campaignSnapshot(
+              row.campaign_id
+            )
+        )
+    );
+  }
+
   poolSnapshot(poolId) {
     const row =
       this.#poolRow(poolId);
@@ -648,15 +950,26 @@ INSERT INTO sponsor_pools (
         row.spent_credits
       );
 
+    const campaign =
+      this.#campaignForPool(
+        row.id
+      );
+
     return Object.freeze({
       schema:
-        "sponsorrail.sqlite-pool.v0.5",
+        "sponsorrail.sqlite-pool.v0.12",
       id:
         String(row.id),
       sponsorDisclosure:
         String(
           row.sponsor_disclosure
         ),
+      campaign:
+        campaign
+          ? campaignFundingMetadata(
+              campaign
+            )
+          : null,
       policy:
         rowPolicy(row),
       availableCredits,
@@ -683,7 +996,168 @@ INSERT INTO sponsor_pools (
       );
   }
 
+  matchCampaigns(
+    task,
+    preferences = {}
+  ) {
+    if (
+      task?.allowSponsorship ===
+      false
+    ) {
+      return Object.freeze([]);
+    }
+
+    const request =
+      sanitizeFundingRequest(
+        task
+      );
+
+    const normalized =
+      normalizeCampaignPreferences(
+        preferences
+      );
+
+    const allowedCapabilities =
+      new Set(
+        normalized
+          .allowedCapabilityTypes
+      );
+
+    const blocked =
+      new Set(
+        normalized
+          .blockedCampaignIds
+      );
+
+    const rows =
+      this.#db
+        .prepare(`
+SELECT
+  c.*,
+  p.available_credits,
+  p.reserved_credits,
+  p.spent_credits
+FROM sponsor_campaigns c
+JOIN sponsor_pools p
+  ON p.id = c.pool_id
+ORDER BY c.priority DESC, c.campaign_id
+`)
+        .all();
+
+    const matches = [];
+
+    for (const row of rows) {
+      if (
+        blocked.has(
+          String(
+            row.campaign_id
+          )
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        !allowedCapabilities
+          .has("*") &&
+        !allowedCapabilities
+          .has(
+            String(
+              row.capability_type
+            )
+          )
+      ) {
+        continue;
+      }
+
+      if (
+        row.targeting_mode ===
+          "contextual" &&
+        normalized
+          .allowContextual !==
+          true
+      ) {
+        continue;
+      }
+
+      const policy =
+        {
+          eligibleTaskClasses:
+            JSON.parse(
+              row
+                .eligible_task_classes
+            ),
+          allowedPrivacyModes:
+            JSON.parse(
+              row
+                .allowed_privacy_modes
+            ),
+          maxComputePerGrant:
+            row.max_compute_per_grant ===
+              null
+              ? null
+              : Number(
+                  row
+                    .max_compute_per_grant
+                )
+        };
+
+      if (
+        !evaluatePolicy(
+          request,
+          policy
+        ).eligible
+      ) {
+        continue;
+      }
+
+      if (
+        Number(
+          row.available_credits
+        ) <
+        request.computeRequested
+      ) {
+        continue;
+      }
+
+      const campaign =
+        this.#campaignForPool(
+          row.pool_id
+        );
+
+      matches.push(
+        Object.freeze({
+          campaign:
+            publicCampaign(
+              campaign
+            ),
+          poolId:
+            String(
+              row.pool_id
+            ),
+          availableCredits:
+            Number(
+              row.available_credits
+            )
+        })
+      );
+    }
+
+    return Object.freeze(
+      matches
+    );
+  }
+
   authorize(task) {
+    if (
+      this.#campaignPreferences
+    ) {
+      return this.authorizeCampaign(
+        task,
+        this.#campaignPreferences
+      );
+    }
+
     if (
       task
         .allowSponsorship ===
@@ -720,9 +1194,14 @@ INSERT INTO sponsor_pools (
       () => {
         const rows =
           this.#db
-            .prepare(
-              "SELECT * FROM sponsor_pools ORDER BY id"
-            )
+            .prepare(`
+SELECT p.*
+FROM sponsor_pools p
+LEFT JOIN sponsor_campaigns c
+  ON c.pool_id = p.id
+WHERE c.pool_id IS NULL
+ORDER BY p.id
+`)
             .all();
 
         let lastReason =
@@ -776,69 +1255,189 @@ WHERE id = ?
             continue;
           }
 
-          const grant =
-            Object.freeze({
-              funded: true,
-              grantId:
-                randomUUID(),
-              poolId:
-                String(row.id),
-              reservationId:
-                randomUUID(),
-              taskId:
-                request.taskId,
-              taskClass:
-                request.taskClass,
-              privacy:
-                request.privacy,
-              computeUnits:
-                request
-                  .computeRequested,
-              sponsorDisclosure:
-                String(
-                  row.sponsor_disclosure
-                ),
-              issuedAt,
-              expiresAt
-            });
-
-          this.#db
-            .prepare(`
-INSERT INTO grants (
-  grant_id,
-  pool_id,
-  reservation_id,
-  task_id,
-  task_class,
-  privacy,
-  compute_units,
-  sponsor_disclosure,
-  issued_at,
-  expires_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`)
-            .run(
-              grant.grantId,
-              grant.poolId,
-              grant
-                .reservationId,
-              grant.taskId,
-              grant.taskClass,
-              grant.privacy,
-              grant.computeUnits,
-              grant
-                .sponsorDisclosure,
-              grant.issuedAt,
-              grant.expiresAt
-            );
-
-          return grant;
+          return this.#mintGrant(
+            row,
+            request,
+            issuedAt,
+            expiresAt
+          );
         }
 
         return Object.freeze({
           funded: false,
           reason:
             lastReason
+        });
+      }
+    );
+  }
+
+  authorizeCampaign(
+    task,
+    preferences = {}
+  ) {
+    if (
+      task
+        .allowSponsorship ===
+      false
+    ) {
+      return Object.freeze({
+        funded: false,
+        reason:
+          "SPONSORSHIP_DECLINED"
+      });
+    }
+
+    const request =
+      sanitizeFundingRequest(
+        task
+      );
+
+    const normalized =
+      normalizeCampaignPreferences(
+        preferences
+      );
+
+    const allowedCapabilities =
+      new Set(
+        normalized
+          .allowedCapabilityTypes
+      );
+
+    const blocked =
+      new Set(
+        normalized
+          .blockedCampaignIds
+      );
+
+    const nowMs =
+      normalizeTime(
+        this.#now(),
+        "now"
+      );
+
+    const issuedAt =
+      toIso(nowMs);
+
+    const expiresAt =
+      toIso(
+        nowMs +
+        this.#grantTtlMs
+      );
+
+    return this.#transaction(
+      () => {
+        const rows =
+          this.#db
+            .prepare(`
+SELECT
+  p.*,
+  c.campaign_id,
+  c.capability_type,
+  c.benefit_description,
+  c.disclosure_label,
+  c.targeting_mode,
+  c.priority,
+  c.budget_credits,
+  c.experience_json
+FROM sponsor_pools p
+JOIN sponsor_campaigns c
+  ON c.pool_id = p.id
+ORDER BY c.priority DESC, c.campaign_id
+`)
+            .all();
+
+        for (const row of rows) {
+          if (
+            blocked.has(
+              String(
+                row.campaign_id
+              )
+            )
+          ) {
+            continue;
+          }
+
+          if (
+            !allowedCapabilities
+              .has("*") &&
+            !allowedCapabilities
+              .has(
+                String(
+                  row.capability_type
+                )
+              )
+          ) {
+            continue;
+          }
+
+          if (
+            row.targeting_mode ===
+              "contextual" &&
+            normalized
+              .allowContextual !==
+              true
+          ) {
+            continue;
+          }
+
+          const decision =
+            evaluatePolicy(
+              request,
+              rowPolicy(row)
+            );
+
+          if (!decision.eligible) {
+            continue;
+          }
+
+          const update =
+            this.#db
+              .prepare(`
+UPDATE sponsor_pools
+SET available_credits =
+      available_credits - ?,
+    reserved_credits =
+      reserved_credits + ?
+WHERE id = ?
+  AND available_credits >= ?
+`)
+              .run(
+                request
+                  .computeRequested,
+                request
+                  .computeRequested,
+                row.id,
+                request
+                  .computeRequested
+              );
+
+          if (
+            Number(
+              update.changes
+            ) !== 1
+          ) {
+            continue;
+          }
+
+          const campaign =
+            this.#campaignForPool(
+              row.id
+            );
+
+          return this.#mintGrant(
+            row,
+            request,
+            issuedAt,
+            expiresAt,
+            campaign
+          );
+        }
+
+        return Object.freeze({
+          funded: false,
+          reason:
+            "NO_ELIGIBLE_SPONSOR_CAMPAIGN"
         });
       }
     );
