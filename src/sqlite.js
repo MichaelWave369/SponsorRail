@@ -1075,6 +1075,11 @@ INSERT INTO sponsor_campaigns (
             )
           );
 
+        this.#setLiabilityCredits(
+          normalized.campaignId,
+          0
+        );
+
         return this.campaignSnapshot(
           normalized.campaignId
         );
@@ -1596,13 +1601,10 @@ WHERE id = ?
           );
         }
 
-        this.#db
-          .prepare(
-            "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
-          )
-          .run(
-            receipt.credits,
-            campaignRow.pool_id
+        const allocation =
+          this.#creditPool(
+            campaignRow.pool_id,
+            receipt.credits
           );
 
         this.#db
@@ -1663,6 +1665,15 @@ INSERT INTO funding_deposits (
             ),
           credits:
             receipt.credits,
+          availableAdded:
+            allocation
+              .availableAdded,
+          liabilityPaid:
+            allocation
+              .liabilityPaid,
+          outstandingLiabilityCredits:
+            allocation
+              .outstandingLiabilityCredits,
           receiptHash
         });
       }
@@ -2214,20 +2225,22 @@ WHERE grant_id = ?
           this.#db
             .prepare(`
 UPDATE sponsor_pools
-SET available_credits =
-      available_credits + ?,
-    reserved_credits =
+SET reserved_credits =
       reserved_credits - ?,
     spent_credits =
       spent_credits + ?
 WHERE id = ?
 `)
             .run(
-              refundUnits,
               row.compute_units,
               usedUnits,
               row.pool_id
             );
+
+          this.#creditPool(
+            row.pool_id,
+            refundUnits
+          );
 
           this.#db
             .prepare(
