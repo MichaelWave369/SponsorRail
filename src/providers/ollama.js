@@ -493,5 +493,106 @@ export class OllamaChatProvider
 
     this.timeoutMs =
       timeoutMs;
+
+    this.fetchImpl =
+      fetchImpl;
+  }
+
+  async probe() {
+    const timeout =
+      timeoutSignal(
+        this.timeoutMs
+      );
+
+    const tagsUrl =
+      new URL(
+        "api/tags",
+        this.baseUrl
+      ).toString();
+
+    try {
+      const response =
+        await this.fetchImpl(
+          tagsUrl,
+          {
+            method: "GET",
+            signal:
+              timeout.signal
+          }
+        );
+
+      if (!response?.ok) {
+        return Object.freeze({
+          available: false,
+          providerId:
+            this.providerId,
+          model:
+            this.model,
+          reason:
+            `HTTP_${response?.status ?? "UNKNOWN"}`
+        });
+      }
+
+      const data =
+        await response.json();
+
+      const models =
+        Array.isArray(
+          data?.models
+        )
+          ? data.models
+              .map(
+                (entry) =>
+                  String(
+                    entry?.model ??
+                    entry?.name ??
+                    ""
+                  )
+              )
+              .filter(Boolean)
+          : [];
+
+      const installed =
+        models.includes(
+          this.model
+        );
+
+      return Object.freeze({
+        available:
+          installed,
+        providerId:
+          this.providerId,
+        model:
+          this.model,
+        reason:
+          installed
+            ? "READY"
+            : "MODEL_NOT_INSTALLED",
+        discoveredModels:
+          Object.freeze(
+            [...models]
+          )
+      });
+    } catch (error) {
+      return Object.freeze({
+        available: false,
+        providerId:
+          this.providerId,
+        model:
+          this.model,
+        reason:
+          timeout.signal
+            .aborted
+            ? "TIMEOUT"
+            : "PROBE_FAILED",
+        error:
+          String(
+            error?.message ??
+            error
+          )
+      });
+    } finally {
+      timeout.cancel();
+    }
   }
 }
