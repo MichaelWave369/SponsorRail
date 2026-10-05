@@ -28,3 +28,4 @@ jobs:
       - run: npm run demo:campaign
       - run: npm run demo:sqlite-campaign
       - run: npm run demo:funding
+      - run: npm run demo:stripe
