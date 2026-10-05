@@ -33,3 +33,8 @@ export {
 export {
   OllamaChatProvider
 } from "./providers/ollama.js";
+
+export {
+  ProviderRouter,
+  executeRoutedSponsoredTask
+} from "./router.js";
