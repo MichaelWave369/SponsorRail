@@ -393,3 +393,30 @@ influence = none
 ```
 
 Campaigns violating those assertions are rejected before a sponsor pool is created.
+
+
+## Transactional campaign persistence v0.12
+
+The SQLite funding backend stores campaign contracts in a dedicated `sponsor_campaigns` table linked one-to-one with their backing sponsor pools.
+
+Campaign creation is atomic: the pool and campaign row either both commit or neither does.
+
+Campaign grants snapshot safe campaign funding metadata into the durable grant row so receipt evidence survives later campaign changes.
+
+### Authorization separation
+
+Generic `authorize(task)` excludes campaign-owned pools.
+
+Campaign funding must use `authorizeCampaign(task, preferences)` or configure the broker with explicit `campaignPreferences`.
+
+This preserves contextual opt-in and campaign blocking/capability controls.
+
+### Migration
+
+Existing SQLite grant tables are upgraded with:
+
+```text
+campaign_json TEXT NULL
+```
+
+Old grants remain valid and simply carry no campaign metadata.
