@@ -1419,6 +1419,13 @@ JOIN sponsor_pools p
 LEFT JOIN campaign_funding_liabilities l
   ON l.campaign_id = c.campaign_id
 WHERE COALESCE(l.outstanding_credits, 0) = 0
+  AND NOT EXISTS (
+    SELECT 1
+    FROM funding_holds h
+    WHERE h.campaign_id = c.campaign_id
+      AND h.status = 'active'
+      AND h.unfunded_credits > 0
+  )
 ORDER BY c.priority DESC, c.campaign_id
 `)
         .all();
@@ -1833,9 +1840,15 @@ INSERT INTO funding_deposits (
           liabilityPaid:
             allocation
               .liabilityPaid,
+          holdCoverageAdded:
+            allocation
+              .holdCoverageAdded,
           outstandingLiabilityCredits:
             allocation
               .outstandingLiabilityCredits,
+          outstandingHoldCredits:
+            allocation
+              .outstandingHoldCredits,
           receiptHash
         });
       }
@@ -3414,9 +3427,26 @@ WHERE campaign_id = ?
         campaignId
       );
 
+    const holds =
+      this.#db
+        .prepare(`
+SELECT
+  COUNT(*) AS active_hold_count,
+  COALESCE(SUM(held_credits), 0) AS held_credits,
+  COALESCE(SUM(unfunded_credits), 0) AS unfunded_credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+`)
+        .get(
+          String(
+            campaignId
+          )
+        );
+
     return Object.freeze({
       schema:
-        "sponsorrail.funding-snapshot.v0.15",
+        "sponsorrail.funding-snapshot.v0.16",
       campaignId:
         String(
           campaignId
@@ -3448,6 +3478,18 @@ WHERE campaign_id = ?
         ),
       outstandingLiabilityCredits:
         liability,
+      activeHoldCount:
+        Number(
+          holds.active_hold_count
+        ),
+      activeHeldCredits:
+        Number(
+          holds.held_credits
+        ),
+      outstandingHoldCredits:
+        Number(
+          holds.unfunded_credits
+        ),
       currentAvailableCredits:
         campaign.pool
           .availableCredits,
@@ -3534,6 +3576,13 @@ JOIN sponsor_campaigns c
 LEFT JOIN campaign_funding_liabilities l
   ON l.campaign_id = c.campaign_id
 WHERE COALESCE(l.outstanding_credits, 0) = 0
+  AND NOT EXISTS (
+    SELECT 1
+    FROM funding_holds h
+    WHERE h.campaign_id = c.campaign_id
+      AND h.status = 'active'
+      AND h.unfunded_credits > 0
+  )
 ORDER BY c.priority DESC, c.campaign_id
 `)
             .all();
