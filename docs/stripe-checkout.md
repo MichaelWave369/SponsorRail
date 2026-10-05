@@ -186,3 +186,41 @@ Refund/dispute amount in Stripe minor units is converted using the adapter's con
 A funding source ID should represent one immutable conversion policy. If the conversion changes, rotate the source ID rather than reusing it.
 
 The generic reversal ledger independently prevents aggregate reversals from exceeding the original SponsorRail deposit credits.
+
+
+## Temporary dispute holds
+
+v0.16 uses Stripe dispute lifecycle webhooks to quarantine credits before final resolution.
+
+```text
+charge.dispute.created
+charge.dispute.updated
+```
+
+map to a deterministic SponsorRail hold:
+
+```text
+holdId = stripe-dispute:<du_...>
+externalReference = stripe-dispute:<du_...>
+```
+
+The hold resolves the original SponsorRail deposit through the dispute's PaymentIntent.
+
+A repeated created/updated event for the same dispute produces the same hold receipt and is idempotent when the disputed amount and original dispute creation timestamp are unchanged.
+
+### Final outcome
+
+`charge.dispute.closed` resolves an existing hold:
+
+```text
+won  -> release
+lost -> permanent reversal
+```
+
+If no hold exists for a final lost dispute, SponsorRail retains v0.15's conservative direct-reversal fallback.
+
+### Timestamp semantics
+
+Hold placement uses the Dispute object's creation timestamp.
+
+Final hold resolution uses the closing Stripe Event timestamp when present, preserving the difference between when risk began and when it was resolved.
