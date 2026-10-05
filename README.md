@@ -10,6 +10,59 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.14 — Stripe Checkout funding adapter
+
+v0.14 connects the first real external funding rail to SponsorRail's signed-deposit protocol.
+
+The adapter accepts Stripe Checkout payment webhooks only after verifying the raw webhook signature and timestamp. It then derives SponsorRail credits from Stripe's signed `amount_total` and currency using an operator-configured integer conversion rate.
+
+### Accepted Stripe events
+
+```text
+checkout.session.completed
+checkout.session.async_payment_succeeded
+```
+
+The Checkout Session must also be:
+
+```text
+mode = payment
+payment_status = paid
+amount_total > 0
+configured currency
+```
+
+### Safety defaults
+
+- raw webhook body required
+- Stripe signature required
+- timestamp tolerance enforced
+- test mode required by default
+- production/live mode must be explicitly enabled
+- adapter is bound to one SponsorRail campaign
+- credits come from signed Stripe amount, not metadata
+- currency conversion is allowlisted
+- optional maximum credits per deposit
+- one Checkout Session maps to one deterministic SponsorRail deposit
+
+### Retry behavior
+
+Stripe may retry webhook delivery. SponsorRail maps a Checkout Session ID to a stable deposit ID:
+
+```text
+stripe-checkout:<checkout-session-id>
+```
+
+Repeated deliveries or multiple accepted success events for the same Checkout Session therefore cannot mint campaign credits twice.
+
+### Demo
+
+```bash
+npm run demo:stripe
+```
+
+The demo uses a synthetic signed test-mode webhook and does not contact Stripe.
+
 ## v0.13 — signed funding provenance and deposit ledger
 
 v0.13 answers a new question: **where did campaign credits come from?**
@@ -535,6 +588,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Durable provider health](docs/health.md)
 - [Sponsor campaigns](docs/campaigns.md)
 - [Funding provenance](docs/funding.md)
+- [Stripe Checkout funding](docs/stripe-checkout.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -543,7 +597,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.13 boundaries
+### Known v0.14 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
@@ -557,6 +611,7 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
 - SQLite now persists campaign contracts, campaign pools, grant campaign snapshots, and transactional campaign authorization
+- the Stripe Checkout adapter verifies webhook evidence and maps paid Checkout Sessions into SponsorRail deposits; it does not create Checkout Sessions or reconcile payouts/refunds
 - signed funding deposits prove source-side credit issuance but do not yet perform fiat/card/bank settlement themselves
 - campaign pools may contain both operator-seeded and verified deposited credits; per-task lot tracing is not claimed
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work
