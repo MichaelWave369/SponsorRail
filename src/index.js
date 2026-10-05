@@ -48,3 +48,10 @@ export {
 export async function loadSqliteHealthBackend() {
   return import("./health-sqlite.js");
 }
+
+export {
+  SponsorCampaignRegistry,
+  campaignFundingMetadata,
+  createCampaignPool,
+  validateSponsorCampaign
+} from "./campaign.js";
