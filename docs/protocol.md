@@ -468,3 +468,64 @@ When `externalReference` is present, the pair `(sourceId, externalReference)` is
 Deposit provenance demonstrates that a verified source attested to adding credits to a campaign pool.
 
 It is not a claim that a later execution consumed a specific payment lot. Pool credits remain fungible in v0.13.
+
+
+## Stripe Checkout funding adapter v0.14
+
+The Stripe adapter consumes the raw webhook body and `Stripe-Signature` header.
+
+Signature verification covers the original raw payload and webhook timestamp. Parsed/re-serialized JSON is not an acceptable substitute for the raw body.
+
+The adapter recognizes these success events:
+
+```text
+checkout.session.completed
+checkout.session.async_payment_succeeded
+```
+
+A recognized event must contain a Checkout Session with:
+
+```text
+object = checkout.session
+mode = payment
+payment_status = paid
+created = positive Unix timestamp
+amount_total = positive integer minor units
+currency = configured 3-letter currency
+```
+
+### Credit conversion
+
+The operator configures integer credits per Stripe minor currency unit:
+
+```js
+{
+  usd: 2
+}
+```
+
+A paid amount of 500 USD minor units therefore produces 1000 SponsorRail credits in that configuration.
+
+This is protocol configuration, not a currency-exchange-rate claim.
+
+### Campaign binding
+
+One adapter instance is bound to one SponsorRail campaign ID.
+
+The campaign destination is not selected from Stripe customer metadata or Checkout metadata.
+
+### Live-mode gate
+
+The adapter defaults to test-mode webhooks.
+
+Production use requires explicit `requiredLivemode: true`.
+
+### Deposit identity
+
+A Checkout Session ID is the stable funding identity:
+
+```text
+stripe-checkout:<session-id>
+```
+
+Webhook event IDs are recorded as Stripe transport evidence but do not create separate funding lots for the same Checkout Session.
