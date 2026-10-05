@@ -242,3 +242,23 @@ SponsorRail's funding-source Ed25519 key authenticates the adapter-to-SponsorRai
 Those are deliberately separate credentials and trust domains.
 
 The adapter does not need the model prompt, repository context, provider identity, or model output.
+
+
+## Funding reversal plane
+
+v0.15 makes external funding a two-direction ledger.
+
+```text
+funding source
+   |
+   +-- signed deposit ---------> campaign pool
+   |
+   +-- signed reversal --------> reversal ledger
+                                  |
+                                  +-- debit available
+                                  +-- create liability if needed
+```
+
+Funding history is append-only. A reversal references its original deposit instead of modifying or deleting that deposit.
+
+Campaign liability is intentionally separate from spent compute. This preserves historical truth while preventing future sponsored work from consuming credits that the campaign no longer economically owns.
