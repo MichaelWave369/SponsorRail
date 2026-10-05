@@ -61,6 +61,8 @@ export {
   SignedFundingSource,
   createFundingSourceKeyPair,
   verifyFundingDeposit,
+  verifyFundingHold,
+  verifyFundingHoldResolution,
   verifyFundingReversal
 } from "./funding.js";
 
