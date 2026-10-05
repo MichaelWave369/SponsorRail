@@ -115,3 +115,27 @@ The adapter intentionally defaults to loopback-only operation. This makes the ea
 The provider sees the execution context because it performs inference. It does not receive sponsor identity or sponsor instructions.
 
 Generated tokens are billed because Ollama can enforce an output ceiling before generation. Prompt token counts remain visible in returned metering telemetry for later pricing research.
+
+
+## Provider discovery and routing
+
+v0.8 adds `ProviderRouter`.
+
+A provider registration describes:
+
+- provider ID
+- executable adapter
+- locality
+- capabilities
+- supported task classes
+- supported privacy modes
+- maximum compute units
+- cost per unit
+- operator priority
+- optional availability probe
+
+Routing never examines the user prompt.
+
+The default selection score rewards an eligible/available provider, preferred locality, lower cost, and operator priority. Privacy, capability, compute-limit, and cost-limit failures disqualify a provider rather than merely lowering its score.
+
+Applications can inspect the candidate list to explain why a provider was or was not eligible.
