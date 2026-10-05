@@ -16,7 +16,8 @@ import {
 } from "./campaign.js";
 
 import {
-  verifyFundingDeposit
+  verifyFundingDeposit,
+  verifyFundingReversal
 } from "./funding.js";
 
 const DEFAULT_GRANT_TTL_MS =
@@ -452,6 +453,25 @@ CREATE TABLE IF NOT EXISTS funding_deposits (
   receipt_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS funding_reversals (
+  reversal_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  original_deposit_id TEXT NOT NULL REFERENCES funding_deposits(deposit_id) ON DELETE RESTRICT,
+  campaign_id TEXT NOT NULL REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  asset TEXT NOT NULL,
+  credits INTEGER NOT NULL CHECK (credits > 0),
+  reason TEXT NOT NULL,
+  external_reference TEXT,
+  occurred_at TEXT NOT NULL,
+  receipt_hash TEXT NOT NULL UNIQUE,
+  receipt_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS campaign_funding_liabilities (
+  campaign_id TEXT PRIMARY KEY REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  outstanding_credits INTEGER NOT NULL CHECK (outstanding_credits >= 0)
+);
+
 CREATE TABLE IF NOT EXISTS settlements (
   idempotency_key TEXT PRIMARY KEY,
   grant_id TEXT NOT NULL UNIQUE,
@@ -495,6 +515,16 @@ CREATE INDEX IF NOT EXISTS idx_funding_deposits_campaign
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_deposits_external_reference
   ON funding_deposits(source_id, external_reference)
+  WHERE external_reference IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_funding_reversals_campaign
+  ON funding_reversals(campaign_id);
+
+CREATE INDEX IF NOT EXISTS idx_funding_reversals_deposit
+  ON funding_reversals(original_deposit_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_reversals_external_reference
+  ON funding_reversals(source_id, external_reference)
   WHERE external_reference IS NOT NULL;
 
 INSERT OR IGNORE INTO meta(key, value)
