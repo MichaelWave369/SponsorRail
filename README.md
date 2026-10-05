@@ -10,6 +10,55 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.10 — durable provider health and cross-process half-open leases
+
+v0.10 makes circuit state survive process restart and coordinates recovery across independent router processes.
+
+The new `SqliteProviderHealthTracker` persists:
+
+- success/failure counts
+- consecutive failures
+- last failure code
+- success/failure timestamps
+- circuit-open expiry
+- half-open execution lease
+
+The health database also persists its circuit policy. A process that opens the same database with a conflicting failure threshold, cooldown, or half-open lease duration is rejected instead of silently interpreting shared state differently.
+
+### Cross-process half-open invariant
+
+After cooldown, a provider becomes half-open. Only one process may hold the half-open execution lease at a time.
+
+```text
+provider circuit cools down
+        |
+        v
+     HALF_OPEN
+      /     \
+ router A  router B
+    |         |
+ atomic lease race
+    |         |
+  WINS       BUSY
+    |
+ trial execution
+```
+
+A busy half-open provider is skipped without reserving sponsor credits.
+
+### Runtime compatibility
+
+- Node 20+: in-memory `ProviderHealthTracker`
+- Node 22.5+: optional durable `SqliteProviderHealthTracker` via `loadSqliteHealthBackend()`
+
+### Demo
+
+```bash
+npm run demo:durable-health
+```
+
+On Node versions without built-in SQLite support, the demo exits successfully with a skip notice.
+
 ## v0.9 — safe provider failover and circuit breaking
 
 v0.9 makes routing resilient without turning retries into accidental duplicate compute.
@@ -320,7 +369,7 @@ No third-party runtime dependencies are required.
 
 ## Current qualification
 
-The v0.4 reference implementation covers blind funding-request isolation, sponsor-free execution context, policy matching, reserve/settle/refund accounting, failure rollback, durable grants, restart settlement, lease expiry and orphan reconciliation, heartbeat renewal, idempotent settlement across restart, v0.3 state migration, hash-linked receipts, a durable append-only receipt journal, journal-to-state recovery, receipt signatures, and tamper verification.
+The current reference implementation covers blind funding-request isolation, sponsor-free execution context, policy matching, reserve/settle/refund accounting, failure rollback, durable grants, restart settlement, lease expiry and orphan reconciliation, heartbeat renewal, idempotent settlement across restart, v0.3 state migration, hash-linked receipts, a durable append-only receipt journal, journal-to-state recovery, receipt signatures, and tamper verification.
 
 ## Privacy boundary
 
@@ -341,6 +390,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Ollama adapter](docs/ollama.md)
 - [Provider routing](docs/routing.md)
 - [Safe failover](docs/failover.md)
+- [Durable provider health](docs/health.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -349,14 +399,15 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.9 boundaries
+### Known v0.10 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
 - heartbeats are caller-driven; there is no worker heartbeat daemon
 - receipt journaling is append-only at the application level, not WORM storage
 - JSON settlement records remain single-process; the SQLite backend provides transactional settlement and receipt sequencing
-- provider health memory is process-local in v0.9 and resets on restart
+- in-memory provider health remains process-local by design; the SQLite health backend provides durable shared state
+- SQLite health coordination is local-machine/database-file coordination, not distributed consensus
 - safe failover requires an explicit retry-safe provider error
 - routing scores are deterministic policy heuristics, not learned recommendations
 - provider health probes are point-in-time availability checks

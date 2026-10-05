@@ -88,8 +88,14 @@ Health memory stores only coarse operational data:
 
 No prompt, source, output, sponsor identity, or raw error message is stored.
 
+## Durable health option
+
+v0.10 adds `SqliteProviderHealthTracker` for restart-safe and cross-process circuit state.
+
+The SQLite backend adds an atomic half-open lease so only one cooperating router process can execute the recovery trial at a time.
+
+The in-memory tracker remains useful for single-process applications.
+
 ## Current limitation
 
-Health memory is process-local in v0.9. A broker/router restart resets circuit state.
-
-Durable health history and cross-process circuit coordination are future qualification rungs.
+SQLite health coordination protects cooperating processes sharing one SQLite database. It is not cross-machine consensus or a global distributed circuit breaker.

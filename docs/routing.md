@@ -132,3 +132,22 @@ A timeout does not prove the provider did no work. The remote side may have comp
 Automatically retrying that task could duplicate real compute even if SponsorRail's internal credits were refunded.
 
 v0.9 therefore treats ambiguous timeouts and generic network failures as non-retry-safe unless an adapter can prove otherwise.
+
+
+## Durable health coordination
+
+A router can use either the in-memory `ProviderHealthTracker` or the SQLite-backed `SqliteProviderHealthTracker`.
+
+The router interface is unchanged: both implement status, success/failure recording, snapshot, half-open acquisition, and half-open release.
+
+During routed execution, a provider whose circuit is `HALF_OPEN` must acquire the health tracker's half-open lease before SponsorRail reserves compute or calls the provider.
+
+If another process already holds the lease, the attempt is recorded internally as:
+
+```text
+HALF_OPEN_BUSY
+```
+
+and routing proceeds to another eligible provider when available.
+
+This prevents simultaneous recovery probes from becoming a provider stampede.

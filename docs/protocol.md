@@ -295,3 +295,60 @@ v0.9 routing evidence may include:
 ```
 
 Raw provider error messages are intentionally excluded.
+
+
+## Durable provider health v0.10
+
+The optional SQLite health backend persists provider circuit state independently from sponsor accounting.
+
+Persisted health fields include:
+
+- provider ID
+- successes
+- failures
+- consecutive failures
+- last failure code
+- last failure timestamp
+- last success timestamp
+- circuit-open expiry
+- half-open lease expiry
+
+No prompt, repository content, source code, model output, sponsor identity, or raw error message is stored.
+
+### Shared circuit policy
+
+A health database records one circuit policy:
+
+```text
+failureThreshold
+cooldownMs
+halfOpenLeaseMs
+```
+
+Independent processes opening the same health database must use the same policy. Conflicting configuration fails closed.
+
+### Half-open execution lease
+
+A half-open provider may be tested by at most one cooperating router process at a time.
+
+```text
+tryAcquireHalfOpen(providerId)
+```
+
+The acquisition is transactional under SQLite `BEGIN IMMEDIATE`.
+
+A successful provider execution clears the circuit and lease. A provider failure records the failure and reopens the circuit when the configured threshold applies. An abandoned half-open lease expires automatically.
+
+### Routing schema
+
+v0.10 routing decisions use:
+
+```text
+sponsorrail.routing.v0.10
+```
+
+SponsorRail execution receipts use:
+
+```text
+sponsorrail.receipt.v0.10
+```

@@ -170,3 +170,36 @@ Mitigation: receipts record provider IDs and coarse failure/failover facts, not 
 Threat: multiple failover attempts reserve sponsor credits simultaneously.
 
 Mitigation: each failed attempt releases its reservation before the next provider is authorized.
+
+
+## Durable health threats added in v0.10
+
+### Circuit amnesia
+
+Threat: restarting a router clears knowledge that a provider is failing.
+
+Mitigation: the SQLite health backend persists circuit history and expiry state.
+
+### Recovery stampede
+
+Threat: many processes observe an expired cooldown and simultaneously test the same half-open provider.
+
+Mitigation: transactional half-open execution lease. Only one cooperating process may claim the recovery trial at a time.
+
+### Policy disagreement
+
+Threat: separate processes interpret the same health rows using different failure thresholds or cooldowns.
+
+Mitigation: the SQLite health database persists the circuit policy and rejects conflicting configuration.
+
+### Abandoned half-open lease
+
+Threat: the process holding a half-open trial crashes before reporting success or failure.
+
+Mitigation: half-open leases expire automatically and may be reacquired after expiry.
+
+### Health database disclosure
+
+Threat: operational health storage becomes a side channel for private task content.
+
+Mitigation: durable health rows contain only provider IDs, counters, coarse failure codes, timestamps, and lease/circuit expiry values.

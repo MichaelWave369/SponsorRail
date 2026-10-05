@@ -44,3 +44,7 @@ export {
 export {
   ProviderHealthTracker
 } from "./health.js";
+
+export async function loadSqliteHealthBackend() {
+  return import("./health-sqlite.js");
+}

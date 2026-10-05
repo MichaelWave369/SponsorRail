@@ -129,3 +129,35 @@ The provider execution envelope contains only the private model context and opaq
 The provider signs coarse metering evidence. SponsorRail uses the registered public key to verify the usage statement before charging a sponsor pool.
 
 This does not make a remote provider blind to the prompt. It makes the **sponsor** blind to the prompt and makes provider-reported usage auditable.
+
+
+## Provider health plane
+
+v0.10 makes provider health a replaceable state plane.
+
+```text
+ProviderRouter
+    |
+    v
+Health Tracker Interface
+    |
+    +---- in-memory tracker
+    |
+    +---- SQLite durable tracker
+              |
+              +-- circuit history
+              +-- shared policy
+              +-- half-open lease
+```
+
+Health data is operational metadata only. It is deliberately independent of sponsor balances and private task contents.
+
+The SQLite health tracker may use the same database file as other SponsorRail SQLite components, but it maintains separate tables and semantics.
+
+### Half-open coordination
+
+Circuit cooldown does not grant unlimited retry authority.
+
+After cooldown, routers see `HALF_OPEN`. The execution path must atomically acquire a short lease before running the provider. Other processes skip the busy trial and may choose another provider.
+
+This coordination occurs before SponsorRail funding authorization, so losing the half-open lease race does not create a sponsor-credit reservation.

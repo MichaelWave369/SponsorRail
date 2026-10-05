@@ -24,3 +24,4 @@ jobs:
       - run: npm run demo:provider
       - run: npm run demo:routing
       - run: npm run demo:failover
+      - run: npm run demo:durable-health
