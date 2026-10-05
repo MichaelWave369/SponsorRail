@@ -79,3 +79,44 @@ Exact signed-deposit replay is idempotent.
 Deposit-ID mutation and duplicate external-reference minting fail closed.
 
 This is distinct from execution settlement idempotency; SponsorRail now protects replay on both the **money-in** and **compute-spend** sides.
+
+
+## Reversal and liability accounting
+
+v0.15 adds append-only negative funding events.
+
+Example:
+
+```text
+campaign:
+available  = 6
+reserved   = 15
+spent      = 0
+liability  = 0
+
+verified refund = 10
+
+after reversal:
+available  = 0
+reserved   = 15
+spent      = 0
+liability  = 4
+```
+
+The active reservation remains intact. The refund does not retroactively revoke authorized work.
+
+If that 15-credit reservation is later released:
+
+```text
+returned reservation = 15
+pay liability         = 4
+newly available       = 11
+
+final:
+available  = 11
+reserved   = 0
+spent      = 0
+liability  = 0
+```
+
+`fundingSnapshot()` now reports verified deposits, verified reversals, net verified funding, and outstanding liability separately.
