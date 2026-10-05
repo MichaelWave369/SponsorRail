@@ -10,6 +10,51 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.16 — temporary funding holds and dispute quarantine
+
+v0.16 models the uncertain period between a dispute opening and its final outcome.
+
+A hold is **not** a reversal. It quarantines campaign credits while the funding risk is unresolved.
+
+### Hold lifecycle
+
+```text
+verified deposit
+      |
+      v
+dispute opens
+      |
+      v
+temporary hold
+  /         \
+won         lost
+ |           |
+release    convert
+ |           |
+available  permanent reversal
+```
+
+A hold removes coverable credits from `available` without touching reserved or spent history.
+
+If available credits cannot cover the full hold, the uncovered amount becomes provisional hold exposure. New deposits and returned reservations cover permanent liability first, then active hold deficits, then become spendable.
+
+### Stripe dispute lifecycle
+
+The Stripe adapter can now map:
+
+- `charge.dispute.created` → place deterministic hold
+- `charge.dispute.updated` → replay the same hold idempotently
+- `charge.dispute.closed` + `won` → release hold
+- `charge.dispute.closed` + `lost` → convert hold into permanent reversal
+
+If the opening webhook was missed, a final lost dispute still falls back to the v0.15 direct reversal path.
+
+### Demo
+
+```bash
+npm run demo:hold
+```
+
 ## v0.15 — funding reversals, refunds, disputes, and liabilities
 
 v0.15 adds the money-out correction path.
@@ -633,6 +678,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Funding provenance](docs/funding.md)
 - [Stripe Checkout funding](docs/stripe-checkout.md)
 - [Funding reversals](docs/reversals.md)
+- [Funding holds](docs/holds.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -641,7 +687,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.15 boundaries
+### Known v0.16 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
@@ -655,7 +701,7 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
 - SQLite now persists campaign contracts, campaign pools, grant campaign snapshots, and transactional campaign authorization
-- the Stripe Checkout adapter now handles successful refunds and final lost disputes, but temporary dispute holds and payout reconciliation remain future work
+- Stripe dispute holds now quarantine credits before final resolution; payout reconciliation and processor-balance settlement remain future work
 - signed funding deposits prove source-side credit issuance but do not yet perform fiat/card/bank settlement themselves
 - campaign pools may contain both operator-seeded and verified deposited credits; per-task lot tracing is not claimed
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work
