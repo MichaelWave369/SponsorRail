@@ -512,6 +512,7 @@ CREATE TABLE IF NOT EXISTS funding_reconciliations (
   asset TEXT NOT NULL,
   as_of TEXT NOT NULL,
   matched INTEGER NOT NULL CHECK (matched IN (0, 1)),
+  statement_hash TEXT NOT NULL UNIQUE,
   report_hash TEXT NOT NULL UNIQUE,
   report_json TEXT NOT NULL,
   recorded_at TEXT NOT NULL
