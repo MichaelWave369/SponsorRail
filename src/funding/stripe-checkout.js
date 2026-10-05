@@ -371,6 +371,17 @@ function assertCheckoutSession(
     );
   }
 
+  if (
+    !Number.isInteger(
+      session.created
+    ) ||
+    session.created <= 0
+  ) {
+    throw new Error(
+      "Stripe Checkout Session created timestamp is required"
+    );
+  }
+
   return session;
 }
 
@@ -383,7 +394,7 @@ export class StripeCheckoutFundingAdapter {
     campaignId,
     creditsPerMinorUnit,
     requiredLivemode =
-      null,
+      false,
     maxCreditsPerDeposit =
       null,
     toleranceSeconds =
@@ -558,15 +569,8 @@ export class StripeCheckoutFundingAdapter {
     }
 
     const occurredAt =
-      Number.isInteger(
-        session.created
-      )
-        ? session.created * 1000
-        : Number.isInteger(
-            event.created
-          )
-          ? event.created * 1000
-          : Number(this.now());
+      session.created *
+      1000;
 
     const depositReceipt =
       this.source
