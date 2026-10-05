@@ -1059,7 +1059,14 @@ export class StripeCheckoutFundingAdapter {
                 externalReference:
                   `stripe-dispute-resolution:${object.id}`,
                 occurredAt:
-                  object.created * 1000
+                  (
+                    Number.isInteger(
+                      event.created
+                    ) &&
+                    event.created > 0
+                      ? event.created
+                      : object.created
+                  ) * 1000
               });
 
           const resolution =
@@ -1138,7 +1145,14 @@ export class StripeCheckoutFundingAdapter {
       currency =
         object.currency;
       occurredAt =
-        object.created;
+        (
+          Number.isInteger(
+            event.created
+          ) &&
+          event.created > 0
+            ? event.created
+            : object.created
+        );
     } else {
       return Object.freeze({
         accepted: false,
