@@ -1,6 +1,6 @@
 {
   "name": "sponsorrail",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Privacy-preserving sponsored compute infrastructure for AI agents.",
   "type": "module",
   "license": "MIT",
@@ -20,6 +20,7 @@
     "demo:funding": "node examples/funding.mjs",
     "demo:stripe": "node examples/stripe-checkout.mjs",
     "demo:reversal": "node examples/reversal.mjs",
-    "demo:hold": "node examples/hold.mjs"
+    "demo:hold": "node examples/hold.mjs",
+    "demo:reconcile": "node examples/reconcile.mjs"
   }
 }
