@@ -1,3 +1,7 @@
+import {
+  ProviderHealthTracker
+} from "./health.js";
+
 function clamp(
   value,
   min,
@@ -137,6 +141,10 @@ function publicCandidate(
       result.priority,
     capabilities:
       result.capabilities,
+    circuitState:
+      result.circuitState,
+    consecutiveFailures:
+      result.consecutiveFailures,
     reasons:
       Object.freeze([
         ...result.reasons
@@ -144,12 +152,121 @@ function publicCandidate(
   });
 }
 
+function sortCandidates(
+  candidates
+) {
+  candidates.sort(
+    (a, b) => {
+      if (
+        a.eligible !==
+        b.eligible
+      ) {
+        return a.eligible
+          ? -1
+          : 1;
+      }
+
+      if (
+        a.score !== b.score
+      ) {
+        return (
+          (b.score ?? -Infinity) -
+          (a.score ?? -Infinity)
+        );
+      }
+
+      if (
+        a.costPerUnit !==
+        b.costPerUnit
+      ) {
+        return (
+          a.costPerUnit -
+          b.costPerUnit
+        );
+      }
+
+      return a.providerId
+        .localeCompare(
+          b.providerId
+        );
+    }
+  );
+
+  return candidates;
+}
+
+function routingDecision(
+  candidate,
+  request,
+  candidates,
+  {
+    attemptCount = 1,
+    failedProviderIds = []
+  } = {}
+) {
+  return Object.freeze({
+    schema:
+      "sponsorrail.routing.v0.9",
+    selectedProviderId:
+      candidate.providerId,
+    score:
+      candidate.score,
+    locality:
+      candidate.locality,
+    costPerUnit:
+      candidate.costPerUnit,
+    priority:
+      candidate.priority,
+    selectedCircuitState:
+      candidate.circuitState,
+    requiredCapabilities:
+      request
+        .requiredCapabilities,
+    preferredLocality:
+      request
+        .preferredLocality,
+    candidateCount:
+      candidates.length,
+    eligibleCount:
+      candidates.filter(
+        (item) =>
+          item.eligible
+      ).length,
+    attemptCount,
+    failoverUsed:
+      attemptCount > 1,
+    failedProviderIds:
+      Object.freeze([
+        ...failedProviderIds
+      ])
+  });
+}
+
 export class ProviderRouter {
   #providers;
 
-  constructor(entries = []) {
+  constructor(
+    entries = [],
+    {
+      healthTracker =
+        new ProviderHealthTracker()
+    } = {}
+  ) {
+    if (
+      !healthTracker ||
+      typeof healthTracker.status !==
+        "function"
+    ) {
+      throw new TypeError(
+        "healthTracker is required"
+      );
+    }
+
     this.#providers =
       new Map();
+
+    this.healthTracker =
+      healthTracker;
 
     for (const entry of entries) {
       this.register(entry);
@@ -286,11 +403,61 @@ export class ProviderRouter {
     return record;
   }
 
+  getProvider(providerId) {
+    return (
+      this.#providers.get(
+        String(providerId)
+      )?.provider ??
+      null
+    );
+  }
+
+  recordSuccess(providerId) {
+    return this.healthTracker
+      .recordSuccess(
+        providerId
+      );
+  }
+
+  recordFailure(
+    providerId,
+    {
+      code =
+        "PROVIDER_FAILURE"
+    } = {}
+  ) {
+    return this.healthTracker
+      .recordFailure(
+        providerId,
+        { code }
+      );
+  }
+
+  healthSnapshot() {
+    return this.healthTracker
+      .snapshot();
+  }
+
   async #evaluate(
     entry,
     request
   ) {
     const reasons = [];
+
+    const health =
+      this.healthTracker
+        .status(
+          entry.providerId
+        );
+
+    if (
+      health.state ===
+      "OPEN"
+    ) {
+      reasons.push(
+        "CIRCUIT_OPEN"
+      );
+    }
 
     const taskEligible =
       entry.taskClasses
@@ -359,14 +526,13 @@ export class ProviderRouter {
     }
 
     let available = true;
-    let probeEvidence = null;
 
     if (
       reasons.length === 0 &&
       entry.probe
     ) {
       try {
-        probeEvidence =
+        const probeEvidence =
           await entry.probe();
 
         available =
@@ -382,6 +548,11 @@ export class ProviderRouter {
           "UNAVAILABLE"
         );
       }
+    } else if (
+      health.state ===
+      "OPEN"
+    ) {
+      available = false;
     }
 
     const eligible =
@@ -430,6 +601,12 @@ export class ProviderRouter {
         10
       );
 
+    const halfOpenPenalty =
+      health.state ===
+        "HALF_OPEN"
+        ? 5
+        : 0;
+
     const score =
       eligible
         ? Number(
@@ -437,7 +614,8 @@ export class ProviderRouter {
               70 +
               localityScore +
               costScore +
-              priorityScore
+              priorityScore -
+              halfOpenPenalty
             ).toFixed(4)
           )
         : null;
@@ -445,8 +623,6 @@ export class ProviderRouter {
     return {
       providerId:
         entry.providerId,
-      provider:
-        entry.provider,
       eligible,
       available,
       score,
@@ -458,8 +634,12 @@ export class ProviderRouter {
         entry.priority,
       capabilities:
         entry.capabilities,
-      reasons,
-      probeEvidence
+      circuitState:
+        health.state,
+      consecutiveFailures:
+        health
+          .consecutiveFailures,
+      reasons
     };
   }
 
@@ -487,41 +667,8 @@ export class ProviderRouter {
         )
       );
 
-    evaluated.sort(
-      (a, b) => {
-        if (
-          a.eligible !==
-          b.eligible
-        ) {
-          return a.eligible
-            ? -1
-            : 1;
-        }
-
-        if (
-          a.score !== b.score
-        ) {
-          return (
-            (b.score ?? -Infinity) -
-            (a.score ?? -Infinity)
-          );
-        }
-
-        if (
-          a.costPerUnit !==
-          b.costPerUnit
-        ) {
-          return (
-            a.costPerUnit -
-            b.costPerUnit
-          );
-        }
-
-        return a.providerId
-          .localeCompare(
-            b.providerId
-          );
-      }
+    sortCandidates(
+      evaluated
     );
 
     return Object.freeze({
@@ -539,118 +686,56 @@ export class ProviderRouter {
     task,
     preferences = {}
   ) {
-    const request =
-      sanitizeRoutingRequest(
+    const discovery =
+      await this.discover(
         task,
         preferences
       );
 
-    const evaluated =
-      await Promise.all(
-        [
-          ...this.#providers
-            .values()
-        ].map(
-          (entry) =>
-            this.#evaluate(
-              entry,
-              request
-            )
-        )
+    const selected =
+      discovery.candidates.find(
+        (candidate) =>
+          candidate.eligible
       );
 
-    const eligible =
-      evaluated
-        .filter(
-          (candidate) =>
-            candidate.eligible
-        )
-        .sort(
-          (a, b) => {
-            if (
-              a.score !== b.score
-            ) {
-              return (
-                b.score -
-                a.score
-              );
-            }
-
-            if (
-              a.costPerUnit !==
-              b.costPerUnit
-            ) {
-              return (
-                a.costPerUnit -
-                b.costPerUnit
-              );
-            }
-
-            return a.providerId
-              .localeCompare(
-                b.providerId
-              );
-          }
-        );
-
-    if (
-      eligible.length === 0
-    ) {
+    if (!selected) {
       return Object.freeze({
         selected: false,
         reason:
           "NO_ELIGIBLE_PROVIDER",
-        request,
+        request:
+          discovery.request,
         candidates:
-          Object.freeze(
-            evaluated.map(
-              publicCandidate
-            )
-          )
+          discovery.candidates
       });
     }
 
-    const selected =
-      eligible[0];
+    const provider =
+      this.getProvider(
+        selected.providerId
+      );
+
+    if (!provider) {
+      throw new Error(
+        "selected provider disappeared"
+      );
+    }
 
     const decision =
-      Object.freeze({
-        schema:
-          "sponsorrail.routing.v0.8",
-        selectedProviderId:
-          selected.providerId,
-        score:
-          selected.score,
-        locality:
-          selected.locality,
-        costPerUnit:
-          selected.costPerUnit,
-        priority:
-          selected.priority,
-        requiredCapabilities:
-          request
-            .requiredCapabilities,
-        preferredLocality:
-          request
-            .preferredLocality,
-        candidateCount:
-          evaluated.length,
-        eligibleCount:
-          eligible.length
-      });
+      routingDecision(
+        selected,
+        discovery.request,
+        discovery.candidates
+      );
 
     return Object.freeze({
       selected: true,
-      provider:
-        selected.provider,
+      provider,
       decision,
-      request,
+      request:
+        discovery.request,
       candidates:
-        Object.freeze(
-          evaluated.map(
-            publicCandidate
-          )
-        )
+        discovery.candidates
     });
   }
 }
@@ -661,11 +746,14 @@ export async function executeRoutedSponsoredTask({
   router,
   providerRegistry,
   routingPreferences = {},
-  receiptPrivateKey = null
+  receiptPrivateKey = null,
+  maxAttempts = 3
 }) {
   if (
     !router ||
-    typeof router.route !==
+    typeof router.discover !==
+      "function" ||
+    typeof router.getProvider !==
       "function"
   ) {
     throw new TypeError(
@@ -673,53 +761,204 @@ export async function executeRoutedSponsoredTask({
     );
   }
 
-  const route =
-    await router.route(
+  if (
+    !Number.isInteger(
+      maxAttempts
+    ) ||
+    maxAttempts <= 0
+  ) {
+    throw new TypeError(
+      "maxAttempts must be a positive integer"
+    );
+  }
+
+  const discovery =
+    await router.discover(
       task,
       routingPreferences
     );
 
-  if (!route.selected) {
+  const eligible =
+    discovery.candidates.filter(
+      (candidate) =>
+        candidate.eligible
+    );
+
+  if (
+    eligible.length === 0
+  ) {
     return Object.freeze({
       status:
-        route.reason,
+        "NO_ELIGIBLE_PROVIDER",
       funded: false,
       routing: {
         request:
-          route.request,
+          discovery.request,
         candidates:
-          route.candidates
+          discovery.candidates,
+        attempts:
+          Object.freeze([])
       }
     });
   }
 
   const {
-    executeSponsoredProviderTask
+    executeSponsoredProviderTask,
+    isSafeProviderRetry
   } =
     await import(
       "./provider.js"
     );
 
-  const execution =
-    await executeSponsoredProviderTask({
-      task,
-      broker,
-      provider:
-        route.provider,
-      providerRegistry,
-      receiptPrivateKey,
-      routingDecision:
-        route.decision
-    });
+  const attempts = [];
+
+  const attemptLimit =
+    Math.min(
+      maxAttempts,
+      eligible.length
+    );
+
+  for (
+    let index = 0;
+    index < attemptLimit;
+    index += 1
+  ) {
+    const candidate =
+      eligible[index];
+
+    const provider =
+      router.getProvider(
+        candidate.providerId
+      );
+
+    if (!provider) {
+      continue;
+    }
+
+    const failedProviderIds =
+      attempts.map(
+        (attempt) =>
+          attempt.providerId
+      );
+
+    const decision =
+      routingDecision(
+        candidate,
+        discovery.request,
+        discovery.candidates,
+        {
+          attemptCount:
+            index + 1,
+          failedProviderIds
+        }
+      );
+
+    try {
+      const execution =
+        await executeSponsoredProviderTask({
+          task,
+          broker,
+          provider,
+          providerRegistry,
+          receiptPrivateKey,
+          routingDecision:
+            decision
+        });
+
+      router.recordSuccess(
+        candidate.providerId
+      );
+
+      const completedAttempts =
+        Object.freeze([
+          ...attempts,
+          Object.freeze({
+            providerId:
+              candidate.providerId,
+            outcome:
+              "COMPLETED",
+            code: null,
+            safeToRetry:
+              false
+          })
+        ]);
+
+      return Object.freeze({
+        ...execution,
+        routing:
+          Object.freeze({
+            decision,
+            candidates:
+              discovery.candidates,
+            attempts:
+              completedAttempts
+          })
+      });
+    } catch (error) {
+      const safeToRetry =
+        isSafeProviderRetry(
+          error
+        );
+
+      const code =
+        String(
+          error?.code ??
+          error?.name ??
+          "PROVIDER_FAILURE"
+        );
+
+      router.recordFailure(
+        candidate.providerId,
+        { code }
+      );
+
+      attempts.push(
+        Object.freeze({
+          providerId:
+            candidate.providerId,
+          outcome:
+            "FAILED",
+          code,
+          safeToRetry
+        })
+      );
+
+      const hasNext =
+        index + 1 <
+        attemptLimit;
+
+      if (
+        !safeToRetry ||
+        !hasNext
+      ) {
+        error.routing =
+          Object.freeze({
+            candidates:
+              discovery.candidates,
+            attempts:
+              Object.freeze([
+                ...attempts
+              ])
+          });
+
+        throw error;
+      }
+    }
+  }
 
   return Object.freeze({
-    ...execution,
-    routing:
-      Object.freeze({
-        decision:
-          route.decision,
-        candidates:
-          route.candidates
-      })
+    status:
+      "NO_ELIGIBLE_PROVIDER",
+    funded: false,
+    routing: {
+      request:
+        discovery.request,
+      candidates:
+        discovery.candidates,
+      attempts:
+        Object.freeze([
+          ...attempts
+        ])
+    }
   });
 }
