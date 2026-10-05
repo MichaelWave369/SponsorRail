@@ -31,3 +31,4 @@ jobs:
       - run: npm run demo:stripe
       - run: npm run demo:reversal
       - run: npm run demo:hold
+      - run: npm run demo:reconcile
