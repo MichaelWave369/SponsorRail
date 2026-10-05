@@ -26,6 +26,8 @@ const event = {
       id: "cs_demo",
       object:
         "checkout.session",
+      payment_intent:
+        "pi_demo",
       created: 900,
       mode: "payment",
       payment_status:
