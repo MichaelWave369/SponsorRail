@@ -182,3 +182,31 @@ durable grant
 The campaign table stores the validated campaign contract. The grant stores only safe campaign funding metadata required for receipt evidence.
 
 Ordinary pool authorization excludes campaign-backed pools. Campaign-aware authorization applies user preferences before reserving credits.
+
+
+## Funding-source plane
+
+v0.13 adds an explicit boundary before sponsor campaign balances.
+
+```text
+Payment / grant / credit system
+          |
+          v
+Funding-source adapter
+          |
+          | Ed25519 signed deposit
+          v
+FundingSourceRegistry
+          |
+          v
+Transactional deposit ledger
+          |
+          v
+Campaign pool
+```
+
+Funding sources are operator-trusted by public key, analogous to compute providers being trusted for signed usage.
+
+The generic protocol does not depend on Stripe, bank rails, cloud credits, or any single payment processor. Those systems can be adapters that issue SponsorRail funding-deposit receipts only after their own settlement rules are satisfied.
+
+Funding-source receipts contain coarse funding metadata only and never enter model context.
