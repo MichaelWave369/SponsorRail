@@ -10,6 +10,43 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.12 — transactional SQLite campaign persistence
+
+v0.12 gives sponsored capability campaigns the same transactional durability as SponsorRail's SQLite funding path.
+
+Campaign creation now atomically persists both the campaign contract and its backing sponsor pool. Campaign authorization is also atomic across independent processes.
+
+### Critical opt-in rule
+
+Generic SQLite `authorize()` ignores campaign-owned pools.
+
+Campaign funding uses `authorizeCampaign()` or a broker configured with explicit `campaignPreferences`. This prevents contextual campaigns from bypassing their user opt-in through the ordinary funding path.
+
+### Cross-process campaign invariant
+
+```text
+campaign budget = 30
+
+worker A requests 20
+worker B requests 20
+
+exactly one succeeds
+
+available = 10
+reserved  = 20
+spent     = 0
+```
+
+### Migration
+
+Existing SponsorRail SQLite databases are migrated in place with a nullable `campaign_json` grant column plus the new `sponsor_campaigns` table.
+
+### Demo
+
+```bash
+npm run demo:sqlite-campaign
+```
+
 ## v0.11 — sponsored capability campaigns and non-coercion contract
 
 v0.11 turns the sponsor-side product rules into executable policy.
@@ -456,7 +493,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.11 boundaries
+### Known v0.12 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
@@ -469,7 +506,7 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - routing scores are deterministic policy heuristics, not learned recommendations
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
-- campaign-aware persistence is currently implemented by the JSON/reference funding path; SQLite campaign columns are a future rung
+- SQLite now persists campaign contracts, campaign pools, grant campaign snapshots, and transactional campaign authorization
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work
 
 ## License
