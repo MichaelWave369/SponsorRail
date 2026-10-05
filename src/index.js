@@ -29,3 +29,7 @@ export {
   executeSponsoredProviderTask,
   verifyProviderUsageReceipt
 } from "./provider.js";
+
+export {
+  OllamaChatProvider
+} from "./providers/ollama.js";

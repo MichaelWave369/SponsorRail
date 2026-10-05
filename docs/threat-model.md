@@ -77,3 +77,30 @@ Mitigation: provider usage receipts use an explicit coarse schema and SponsorRai
 ### Remote-provider privacy
 
 A remote compute provider may necessarily receive the execution context. v0.6 does not claim confidential inference. Sponsor privacy and provider privacy are separate trust boundaries.
+
+
+## Ollama adapter threats added in v0.7
+
+### Accidental remote disclosure
+
+Threat: an operator believes Ollama is local while configuration points to a remote endpoint.
+
+Mitigation: non-loopback endpoints are rejected unless `allowRemote=true`. Remote plaintext HTTP is rejected unless separately opted into.
+
+### Model substitution
+
+Threat: configuration silently switches to an unintended model.
+
+Mitigation: the configured model must be present in the adapter's model allowlist.
+
+### Unbounded generation
+
+Threat: a provider generates more billable output than the grant permits.
+
+Mitigation: `num_predict` is clamped to the authorization ceiling and reported `eval_count` is independently checked after completion.
+
+### Hung local inference
+
+Threat: a stalled Ollama request holds sponsor credits indefinitely.
+
+Mitigation: the adapter aborts after a configurable timeout and SponsorRail releases the reservation on provider failure.
