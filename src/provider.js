@@ -386,7 +386,8 @@ export async function executeSponsoredProviderTask({
   broker,
   provider,
   providerRegistry,
-  receiptPrivateKey = null
+  receiptPrivateKey = null,
+  routingDecision = null
 }) {
   if (
     !broker ||
@@ -534,6 +535,52 @@ export async function executeSponsoredProviderTask({
       sponsorInstructionsInModelContext:
         false
     },
+    routing:
+      routingDecision
+        ? {
+            schema:
+              String(
+                routingDecision.schema
+              ),
+            selectedProviderId:
+              String(
+                routingDecision.selectedProviderId
+              ),
+            score:
+              Number(
+                routingDecision.score
+              ),
+            locality:
+              String(
+                routingDecision.locality
+              ),
+            costPerUnit:
+              Number(
+                routingDecision.costPerUnit
+              ),
+            priority:
+              Number(
+                routingDecision.priority
+              ),
+            requiredCapabilities:
+              [
+                ...routingDecision
+                  .requiredCapabilities
+              ],
+            preferredLocality:
+              routingDecision
+                .preferredLocality ??
+              null,
+            candidateCount:
+              Number(
+                routingDecision.candidateCount
+              ),
+            eligibleCount:
+              Number(
+                routingDecision.eligibleCount
+              )
+          }
+        : null,
     provider: {
       providerId:
         providerRun
