@@ -438,6 +438,42 @@ export class ProviderRouter {
       .snapshot();
   }
 
+  tryAcquireHalfOpen(
+    providerId,
+    options = {}
+  ) {
+    if (
+      typeof this.healthTracker
+        .tryAcquireHalfOpen !==
+      "function"
+    ) {
+      return true;
+    }
+
+    return this.healthTracker
+      .tryAcquireHalfOpen(
+        providerId,
+        options
+      );
+  }
+
+  releaseHalfOpen(
+    providerId
+  ) {
+    if (
+      typeof this.healthTracker
+        .releaseHalfOpen !==
+      "function"
+    ) {
+      return null;
+    }
+
+    return this.healthTracker
+      .releaseHalfOpen(
+        providerId
+      );
+  }
+
   async #evaluate(
     entry,
     request
@@ -818,13 +854,45 @@ export async function executeRoutedSponsoredTask({
       eligible.length
     );
 
+  let executionAttempts = 0;
+
   for (
     let index = 0;
-    index < attemptLimit;
+    index < eligible.length;
     index += 1
   ) {
+    if (
+      executionAttempts >=
+      maxAttempts
+    ) {
+      break;
+    }
+
     const candidate =
       eligible[index];
+
+    if (
+      candidate.circuitState ===
+        "HALF_OPEN" &&
+      !router.tryAcquireHalfOpen(
+        candidate.providerId
+      )
+    ) {
+      attempts.push(
+        Object.freeze({
+          providerId:
+            candidate.providerId,
+          outcome:
+            "SKIPPED",
+          code:
+            "HALF_OPEN_BUSY",
+          safeToRetry:
+            false
+        })
+      );
+
+      continue;
+    }
 
     const provider =
       router.getProvider(
@@ -832,14 +900,26 @@ export async function executeRoutedSponsoredTask({
       );
 
     if (!provider) {
+      router.releaseHalfOpen(
+        candidate.providerId
+      );
+
       continue;
     }
 
+    executionAttempts += 1;
+
     const failedProviderIds =
-      attempts.map(
-        (attempt) =>
-          attempt.providerId
-      );
+      attempts
+        .filter(
+          (attempt) =>
+            attempt.outcome ===
+            "FAILED"
+        )
+        .map(
+          (attempt) =>
+            attempt.providerId
+        );
 
     const decision =
       routingDecision(
@@ -848,7 +928,7 @@ export async function executeRoutedSponsoredTask({
         discovery.candidates,
         {
           attemptCount:
-            index + 1,
+            executionAttempts,
           failedProviderIds
         }
       );
@@ -924,8 +1004,10 @@ export async function executeRoutedSponsoredTask({
       );
 
       const hasNext =
+        executionAttempts <
+          maxAttempts &&
         index + 1 <
-        attemptLimit;
+          eligible.length;
 
       if (
         !safeToRetry ||
