@@ -82,3 +82,14 @@ Pending/failed refunds and non-lost dispute closures do not create funding rever
 v0.15 does not model temporary dispute holds. It waits for a final lost dispute before applying a permanent debit.
 
 That is conservative about ledger finality but means a campaign may remain economically exposed while a dispute is unresolved. A future hold/reserve layer can model that intermediate state explicitly.
+
+
+## Relationship to v0.16 holds
+
+A temporary hold is provisional and does not appear in permanent reversal totals.
+
+If the hold resolves as lost, it is converted into one permanent reversal for the hold amount.
+
+If it resolves as won, no permanent reversal is created.
+
+This keeps `verifiedReversalCredits` reserved for finalized negative funding events while `activeHeldCredits` reports unresolved exposure separately.
