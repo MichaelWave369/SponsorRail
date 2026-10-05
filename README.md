@@ -10,6 +10,55 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.13 — signed funding provenance and deposit ledger
+
+v0.13 answers a new question: **where did campaign credits come from?**
+
+SponsorRail now supports registered funding sources that issue Ed25519-signed deposit receipts. The SQLite funding backend verifies those receipts before atomically increasing a campaign pool.
+
+### Funding flow
+
+```text
+external funding event
+       |
+       v
+trusted funding-source adapter
+       |
+       | signed deposit receipt
+       v
+FundingSourceRegistry
+       |
+       | signature + source verification
+       v
+SQLite deposit transaction
+       |
+       +-- append immutable deposit record
+       +-- increase campaign available credits
+```
+
+### Idempotency
+
+The same signed deposit can be replayed safely without double-crediting a campaign.
+
+Reusing a deposit ID with a different signed payload fails closed. Reusing the same external funding reference under a second deposit ID also fails.
+
+### Provenance scope
+
+v0.13 proves that verified credits entered a campaign pool. It deliberately does **not** claim that a particular task spent a particular external dollar once credits are fungible.
+
+`fundingSnapshot()` separates:
+
+- operator-seeded credits
+- verified deposit count
+- verified deposited credits
+- current available / reserved / spent balances
+
+### Demo
+
+```bash
+npm run demo:funding
+```
+
 ## v0.12 — transactional SQLite campaign persistence
 
 v0.12 gives sponsored capability campaigns the same transactional durability as SponsorRail's SQLite funding path.
@@ -485,6 +534,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Safe failover](docs/failover.md)
 - [Durable provider health](docs/health.md)
 - [Sponsor campaigns](docs/campaigns.md)
+- [Funding provenance](docs/funding.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -493,7 +543,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.12 boundaries
+### Known v0.13 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
@@ -507,6 +557,8 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
 - SQLite now persists campaign contracts, campaign pools, grant campaign snapshots, and transactional campaign authorization
+- signed funding deposits prove source-side credit issuance but do not yet perform fiat/card/bank settlement themselves
+- campaign pools may contain both operator-seeded and verified deposited credits; per-task lot tracing is not claimed
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work
 
 ## License

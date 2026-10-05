@@ -15,6 +15,10 @@ import {
   validateSponsorCampaign
 } from "./campaign.js";
 
+import {
+  verifyFundingDeposit
+} from "./funding.js";
+
 const DEFAULT_GRANT_TTL_MS =
   5 * 60 * 1000;
 
@@ -436,6 +440,18 @@ CREATE TABLE IF NOT EXISTS grants (
   campaign_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS funding_deposits (
+  deposit_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  campaign_id TEXT NOT NULL REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  asset TEXT NOT NULL,
+  credits INTEGER NOT NULL CHECK (credits > 0),
+  external_reference TEXT,
+  occurred_at TEXT NOT NULL,
+  receipt_hash TEXT NOT NULL UNIQUE,
+  receipt_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settlements (
   idempotency_key TEXT PRIMARY KEY,
   grant_id TEXT NOT NULL UNIQUE,
@@ -473,6 +489,13 @@ CREATE INDEX IF NOT EXISTS idx_grants_expiry
 
 CREATE INDEX IF NOT EXISTS idx_settlements_grant
   ON settlements(grant_id);
+
+CREATE INDEX IF NOT EXISTS idx_funding_deposits_campaign
+  ON funding_deposits(campaign_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_deposits_external_reference
+  ON funding_deposits(source_id, external_reference)
+  WHERE external_reference IS NOT NULL;
 
 INSERT OR IGNORE INTO meta(key, value)
   VALUES ('receipt_sequence', '0');
@@ -1270,6 +1293,326 @@ WHERE id = ?
         });
       }
     );
+  }
+
+  depositCampaign(
+    receipt,
+    fundingSourceRegistry
+  ) {
+    if (
+      !verifyFundingDeposit(
+        receipt,
+        fundingSourceRegistry
+      )
+    ) {
+      throw new Error(
+        "funding deposit verification failed"
+      );
+    }
+
+    const receiptJson =
+      canonicalJson(
+        receipt
+      );
+
+    const receiptHash =
+      createHash("sha256")
+        .update(
+          receiptJson
+        )
+        .digest("hex");
+
+    return this.#transaction(
+      () => {
+        const existing =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_deposits WHERE deposit_id = ?"
+            )
+            .get(
+              String(
+                receipt.depositId
+              )
+            );
+
+        if (existing) {
+          if (
+            String(
+              existing.receipt_hash
+            ) !==
+            receiptHash
+          ) {
+            throw new Error(
+              "funding deposit idempotency conflict"
+            );
+          }
+
+          return Object.freeze({
+            applied: false,
+            idempotent: true,
+            depositId:
+              String(
+                existing.deposit_id
+              ),
+            sourceId:
+              String(
+                existing.source_id
+              ),
+            campaignId:
+              String(
+                existing.campaign_id
+              ),
+            credits:
+              Number(
+                existing.credits
+              ),
+            receiptHash:
+              String(
+                existing.receipt_hash
+              )
+          });
+        }
+
+        const campaignRow =
+          this.#campaignRow(
+            receipt.campaignId
+          );
+
+        if (!campaignRow) {
+          throw new Error(
+            "unknown campaign"
+          );
+        }
+
+        const duplicateReference =
+          receipt.externalReference ===
+            null
+            ? null
+            : this.#db
+                .prepare(
+                  "SELECT * FROM funding_deposits WHERE source_id = ? AND external_reference = ?"
+                )
+                .get(
+                  String(
+                    receipt.sourceId
+                  ),
+                  String(
+                    receipt.externalReference
+                  )
+                );
+
+        if (duplicateReference) {
+          throw new Error(
+            "funding external reference already deposited"
+          );
+        }
+
+        this.#db
+          .prepare(
+            "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
+          )
+          .run(
+            receipt.credits,
+            campaignRow.pool_id
+          );
+
+        this.#db
+          .prepare(`
+INSERT INTO funding_deposits (
+  deposit_id,
+  source_id,
+  campaign_id,
+  asset,
+  credits,
+  external_reference,
+  occurred_at,
+  receipt_hash,
+  receipt_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+          .run(
+            String(
+              receipt.depositId
+            ),
+            String(
+              receipt.sourceId
+            ),
+            String(
+              receipt.campaignId
+            ),
+            String(
+              receipt.asset
+            ),
+            receipt.credits,
+            receipt.externalReference ===
+              null
+              ? null
+              : String(
+                  receipt.externalReference
+                ),
+            String(
+              receipt.occurredAt
+            ),
+            receiptHash,
+            receiptJson
+          );
+
+        return Object.freeze({
+          applied: true,
+          idempotent: false,
+          depositId:
+            String(
+              receipt.depositId
+            ),
+          sourceId:
+            String(
+              receipt.sourceId
+            ),
+          campaignId:
+            String(
+              receipt.campaignId
+            ),
+          credits:
+            receipt.credits,
+          receiptHash
+        });
+      }
+    );
+  }
+
+  listFundingDeposits({
+    campaignId = null,
+    sourceId = null
+  } = {}) {
+    const clauses = [];
+    const params = [];
+
+    if (campaignId !== null) {
+      clauses.push(
+        "campaign_id = ?"
+      );
+      params.push(
+        String(campaignId)
+      );
+    }
+
+    if (sourceId !== null) {
+      clauses.push(
+        "source_id = ?"
+      );
+      params.push(
+        String(sourceId)
+      );
+    }
+
+    const where =
+      clauses.length > 0
+        ? ` WHERE ${clauses.join(" AND ")}`
+        : "";
+
+    return Object.freeze(
+      this.#db
+        .prepare(
+          `SELECT * FROM funding_deposits${where} ORDER BY occurred_at, deposit_id`
+        )
+        .all(...params)
+        .map(
+          (row) =>
+            Object.freeze({
+              depositId:
+                String(
+                  row.deposit_id
+                ),
+              sourceId:
+                String(
+                  row.source_id
+                ),
+              campaignId:
+                String(
+                  row.campaign_id
+                ),
+              asset:
+                String(
+                  row.asset
+                ),
+              credits:
+                Number(
+                  row.credits
+                ),
+              externalReference:
+                row.external_reference ??
+                null,
+              occurredAt:
+                String(
+                  row.occurred_at
+                ),
+              receiptHash:
+                String(
+                  row.receipt_hash
+                ),
+              receipt:
+                JSON.parse(
+                  row.receipt_json
+                )
+            })
+        )
+    );
+  }
+
+  fundingSnapshot(
+    campaignId
+  ) {
+    const campaign =
+      this.campaignSnapshot(
+        campaignId
+      );
+
+    if (!campaign) {
+      return null;
+    }
+
+    const row =
+      this.#db
+        .prepare(`
+SELECT
+  COUNT(*) AS deposit_count,
+  COALESCE(SUM(credits), 0) AS verified_credits
+FROM funding_deposits
+WHERE campaign_id = ?
+`)
+        .get(
+          String(
+            campaignId
+          )
+        );
+
+    return Object.freeze({
+      schema:
+        "sponsorrail.funding-snapshot.v0.13",
+      campaignId:
+        String(
+          campaignId
+        ),
+      operatorSeedCredits:
+        campaign.budgetCredits,
+      verifiedDepositCount:
+        Number(
+          row.deposit_count
+        ),
+      verifiedDepositCredits:
+        Number(
+          row.verified_credits
+        ),
+      currentAvailableCredits:
+        campaign.pool
+          .availableCredits,
+      currentReservedCredits:
+        campaign.pool
+          .reservedCredits,
+      currentSpentCredits:
+        campaign.pool
+          .spentCredits
+    });
   }
 
   authorizeCampaign(

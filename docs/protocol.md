@@ -420,3 +420,51 @@ campaign_json TEXT NULL
 ```
 
 Old grants remain valid and simply carry no campaign metadata.
+
+
+## Signed funding deposits v0.13
+
+A trusted funding source may issue:
+
+```json
+{
+  "schema": "sponsorrail.funding-deposit.v0.13",
+  "depositId": "uuid",
+  "sourceId": "source.example",
+  "campaignId": "open-source-builds",
+  "asset": "compute-credits",
+  "credits": 2500,
+  "externalReference": "payment-or-grant-reference",
+  "occurredAt": "2026-10-05T02:00:00.000Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "value": "base64"
+  }
+}
+```
+
+The operator registers trusted funding-source public keys in `FundingSourceRegistry`.
+
+Before a campaign balance changes, SponsorRail verifies:
+
+1. the source is registered and enabled
+2. the asset matches the registered source contract
+3. the Ed25519 signature is valid
+4. credits are a positive integer
+5. the destination campaign exists
+
+### Deposit idempotency
+
+`depositId` is the primary replay key.
+
+Replaying the identical signed receipt returns an idempotent result and does not add credits again.
+
+A different signed payload reusing the same deposit ID is rejected.
+
+When `externalReference` is present, the pair `(sourceId, externalReference)` is also unique, preventing one external payment/grant from being minted twice under different deposit IDs.
+
+### Provenance limits
+
+Deposit provenance demonstrates that a verified source attested to adding credits to a campaign pool.
+
+It is not a claim that a later execution consumed a specific payment lot. Pool credits remain fungible in v0.13.
