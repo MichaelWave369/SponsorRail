@@ -352,3 +352,44 @@ SponsorRail execution receipts use:
 ```text
 sponsorrail.receipt.v0.10
 ```
+
+
+## Sponsored capability campaigns v0.11
+
+A campaign describes funding policy and user-visible benefit without adding execution authority.
+
+```json
+{
+  "schema": "sponsorrail.campaign.v0.11",
+  "campaignId": "open-source-builds",
+  "sponsorDisclosure": "ExampleCloud",
+  "capabilityType": "compute",
+  "benefitDescription": "Funds open-source agent compute",
+  "targetingMode": "universal",
+  "budgetCredits": 100,
+  "eligibleTaskClasses": ["*"],
+  "allowedPrivacyModes": ["blind"],
+  "maxComputePerGrant": 25
+}
+```
+
+Campaign funding metadata carried into grants and receipts is restricted to coarse fields and non-coercion assertions.
+
+### Contextual targeting
+
+`targetingMode=contextual` may match the coarse task class only when the user/application explicitly supplies `allowContextual=true`.
+
+Prompt text, repository context, source code, and output are never campaign-matching inputs.
+
+### Non-coercion assertions
+
+A conforming v0.11 campaign must resolve to:
+
+```text
+interactionRequired = false
+dismissible = true
+dataShared = none
+influence = none
+```
+
+Campaigns violating those assertions are rejected before a sponsor pool is created.
