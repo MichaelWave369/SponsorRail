@@ -236,3 +236,30 @@ Mitigation: campaign experience must declare `influence=none` and `rankingInflue
 Threat: sponsorship silently trades user data for compute.
 
 Mitigation: v0.11 campaign contract requires `dataShared=none` and rejects prompt, repository, output, or identity access.
+
+
+## SQLite campaign threats added in v0.12
+
+### Contextual opt-in bypass
+
+Threat: a contextual campaign is persisted as a normal pool and later selected by generic authorization.
+
+Mitigation: generic SQLite authorization explicitly excludes campaign-owned pools. Campaign pools require campaign-aware authorization.
+
+### Partial campaign creation
+
+Threat: a campaign row exists without its funding pool, or a pool exists without its campaign contract.
+
+Mitigation: campaign row and pool are created in one SQLite write transaction.
+
+### Concurrent campaign overspend
+
+Threat: multiple processes simultaneously reserve more credits than the campaign budget.
+
+Mitigation: campaign authorization uses the same transactional conditional balance update used by ordinary SQLite funding.
+
+### Campaign evidence loss after restart
+
+Threat: a funded grant survives restart but loses which campaign paid for it.
+
+Mitigation: safe campaign funding metadata is snapshotted into the durable grant's `campaign_json` field.

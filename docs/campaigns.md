@@ -74,8 +74,19 @@ The router never sees prompt contents for this purpose.
 
 Safe campaign metadata follows the funding grant and SponsorRail receipt, while `buildExecutionAuthorization()` continues to strip all sponsor/campaign fields before execution.
 
-## Current persistence scope
+## Transactional SQLite persistence
 
-The v0.11 JSON/reference funding path persists campaign metadata through pool snapshots and restart recovery.
+v0.12 persists campaigns in SQLite with atomic pool creation and campaign authorization.
 
-The transactional SQLite funding backend does not yet persist campaign metadata; that is deliberately left for a focused migration rung rather than silently storing partial campaign state.
+The SQLite backend supports:
+
+- `createCampaign()`
+- `campaignSnapshot()`
+- `listCampaigns()`
+- `matchCampaigns()`
+- `authorizeCampaign()`
+- constructor-level `campaignPreferences`
+
+Generic `authorize()` intentionally excludes campaign pools so contextual opt-in cannot be bypassed.
+
+Campaign authorization uses the same conditional balance update pattern as ordinary SQLite funding, preserving the no-overspend invariant across processes.
