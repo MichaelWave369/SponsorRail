@@ -39,6 +39,61 @@ function isoNow(now) {
     .toISOString();
 }
 
+function normalizeOccurredAt(
+  occurredAt,
+  now
+) {
+  if (
+    occurredAt === null ||
+    occurredAt === undefined
+  ) {
+    return isoNow(now);
+  }
+
+  if (
+    typeof occurredAt ===
+      "string"
+  ) {
+    const parsed =
+      Date.parse(
+        occurredAt
+      );
+
+    if (
+      !Number.isFinite(
+        parsed
+      )
+    ) {
+      throw new TypeError(
+        "occurredAt must be a valid time"
+      );
+    }
+
+    return new Date(parsed)
+      .toISOString();
+  }
+
+  const milliseconds =
+    occurredAt instanceof Date
+      ? occurredAt.getTime()
+      : Number(occurredAt);
+
+  if (
+    !Number.isFinite(
+      milliseconds
+    ) ||
+    milliseconds < 0
+  ) {
+    throw new TypeError(
+      "occurredAt must be a valid time"
+    );
+  }
+
+  return new Date(
+    milliseconds
+  ).toISOString();
+}
+
 export function createFundingSourceKeyPair() {
   return createReceiptKeyPair();
 }
@@ -207,6 +262,8 @@ export class SignedFundingSource {
     depositId =
       randomUUID(),
     externalReference =
+      null,
+    occurredAt =
       null
   }) {
     if (!campaignId) {
@@ -240,7 +297,10 @@ export class SignedFundingSource {
               externalReference
             ),
       occurredAt:
-        isoNow(this.now)
+        normalizeOccurredAt(
+          occurredAt,
+          this.now
+        )
     };
 
     return signReceipt(
