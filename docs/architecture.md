@@ -161,3 +161,24 @@ Circuit cooldown does not grant unlimited retry authority.
 After cooldown, routers see `HALF_OPEN`. The execution path must atomically acquire a short lease before running the provider. Other processes skip the busy trial and may choose another provider.
 
 This coordination occurs before SponsorRail funding authorization, so losing the half-open lease race does not create a sponsor-credit reservation.
+
+
+## Campaign persistence plane
+
+v0.12 adds a dedicated SQLite campaign table linked to sponsor pools.
+
+```text
+sponsor_campaigns
+      |
+      | 1:1
+      v
+sponsor_pools
+      |
+      v
+durable grant
+  campaign_json snapshot
+```
+
+The campaign table stores the validated campaign contract. The grant stores only safe campaign funding metadata required for receipt evidence.
+
+Ordinary pool authorization excludes campaign-backed pools. Campaign-aware authorization applies user preferences before reserving credits.
