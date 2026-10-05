@@ -55,3 +55,10 @@ export {
   createCampaignPool,
   validateSponsorCampaign
 } from "./campaign.js";
+
+export {
+  FundingSourceRegistry,
+  SignedFundingSource,
+  createFundingSourceKeyPair,
+  verifyFundingDeposit
+} from "./funding.js";
