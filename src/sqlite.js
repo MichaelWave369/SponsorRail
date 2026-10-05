@@ -323,6 +323,7 @@ export class SqliteFundingBroker {
   #db;
   #now;
   #grantTtlMs;
+  #campaignPreferences;
 
   constructor(
     filePath,
@@ -332,7 +333,8 @@ export class SqliteFundingBroker {
       now =
         () => Date.now(),
       busyTimeoutMs = 5000,
-      autoReconcile = true
+      autoReconcile = true,
+      campaignPreferences = null
     } = {}
   ) {
     if (!filePath) {
@@ -363,6 +365,13 @@ export class SqliteFundingBroker {
       grantTtlMs;
 
     this.#now = now;
+
+    this.#campaignPreferences =
+      campaignPreferences === null
+        ? null
+        : normalizeCampaignPreferences(
+            campaignPreferences
+          );
 
     this.#db =
       new DatabaseSync(
@@ -396,6 +405,22 @@ CREATE TABLE IF NOT EXISTS sponsor_pools (
   max_compute_per_grant INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS sponsor_campaigns (
+  campaign_id TEXT PRIMARY KEY,
+  pool_id TEXT NOT NULL UNIQUE REFERENCES sponsor_pools(id) ON DELETE RESTRICT,
+  sponsor_disclosure TEXT NOT NULL,
+  capability_type TEXT NOT NULL,
+  benefit_description TEXT NOT NULL,
+  disclosure_label TEXT NOT NULL,
+  targeting_mode TEXT NOT NULL CHECK (targeting_mode IN ('universal', 'contextual')),
+  budget_credits INTEGER NOT NULL CHECK (budget_credits > 0),
+  eligible_task_classes TEXT NOT NULL,
+  allowed_privacy_modes TEXT NOT NULL,
+  max_compute_per_grant INTEGER,
+  priority REAL NOT NULL,
+  experience_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS grants (
   grant_id TEXT PRIMARY KEY,
   pool_id TEXT NOT NULL REFERENCES sponsor_pools(id) ON DELETE RESTRICT,
@@ -407,7 +432,8 @@ CREATE TABLE IF NOT EXISTS grants (
   sponsor_disclosure TEXT NOT NULL,
   issued_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  last_heartbeat_at TEXT
+  last_heartbeat_at TEXT,
+  campaign_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settlements (
@@ -436,6 +462,12 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE INDEX IF NOT EXISTS idx_grants_pool
   ON grants(pool_id);
 
+CREATE INDEX IF NOT EXISTS idx_campaigns_pool
+  ON sponsor_campaigns(pool_id);
+
+CREATE INDEX IF NOT EXISTS idx_campaigns_targeting
+  ON sponsor_campaigns(targeting_mode);
+
 CREATE INDEX IF NOT EXISTS idx_grants_expiry
   ON grants(expires_at);
 
@@ -448,6 +480,27 @@ INSERT OR IGNORE INTO meta(key, value)
 INSERT OR IGNORE INTO meta(key, value)
   VALUES ('receipt_head', '');
 `);
+
+    const grantColumns =
+      this.#db
+        .prepare(
+          "PRAGMA table_info(grants)"
+        )
+        .all()
+        .map(
+          (row) =>
+            String(row.name)
+        );
+
+    if (
+      !grantColumns.includes(
+        "campaign_json"
+      )
+    ) {
+      this.#db.exec(
+        "ALTER TABLE grants ADD COLUMN campaign_json TEXT"
+      );
+    }
   }
 
   #transaction(fn) {
