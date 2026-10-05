@@ -16,7 +16,8 @@ import {
 } from "./campaign.js";
 
 import {
-  verifyFundingDeposit
+  verifyFundingDeposit,
+  verifyFundingReversal
 } from "./funding.js";
 
 const DEFAULT_GRANT_TTL_MS =
@@ -452,6 +453,25 @@ CREATE TABLE IF NOT EXISTS funding_deposits (
   receipt_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS funding_reversals (
+  reversal_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  original_deposit_id TEXT NOT NULL REFERENCES funding_deposits(deposit_id) ON DELETE RESTRICT,
+  campaign_id TEXT NOT NULL REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  asset TEXT NOT NULL,
+  credits INTEGER NOT NULL CHECK (credits > 0),
+  reason TEXT NOT NULL,
+  external_reference TEXT,
+  occurred_at TEXT NOT NULL,
+  receipt_hash TEXT NOT NULL UNIQUE,
+  receipt_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS campaign_funding_liabilities (
+  campaign_id TEXT PRIMARY KEY REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  outstanding_credits INTEGER NOT NULL CHECK (outstanding_credits >= 0)
+);
+
 CREATE TABLE IF NOT EXISTS settlements (
   idempotency_key TEXT PRIMARY KEY,
   grant_id TEXT NOT NULL UNIQUE,
@@ -495,6 +515,16 @@ CREATE INDEX IF NOT EXISTS idx_funding_deposits_campaign
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_deposits_external_reference
   ON funding_deposits(source_id, external_reference)
+  WHERE external_reference IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_funding_reversals_campaign
+  ON funding_reversals(campaign_id);
+
+CREATE INDEX IF NOT EXISTS idx_funding_reversals_deposit
+  ON funding_reversals(original_deposit_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_reversals_external_reference
+  ON funding_reversals(source_id, external_reference)
   WHERE external_reference IS NOT NULL;
 
 INSERT OR IGNORE INTO meta(key, value)
@@ -562,21 +592,180 @@ INSERT OR IGNORE INTO meta(key, value)
       .get(String(grantId));
   }
 
+  #campaignIdForPool(
+    poolId
+  ) {
+    const row =
+      this.#db
+        .prepare(
+          "SELECT campaign_id FROM sponsor_campaigns WHERE pool_id = ?"
+        )
+        .get(
+          String(poolId)
+        );
+
+    return row
+      ? String(
+          row.campaign_id
+        )
+      : null;
+  }
+
+  #liabilityCredits(
+    campaignId
+  ) {
+    const row =
+      this.#db
+        .prepare(
+          "SELECT outstanding_credits FROM campaign_funding_liabilities WHERE campaign_id = ?"
+        )
+        .get(
+          String(campaignId)
+        );
+
+    return row
+      ? Number(
+          row.outstanding_credits
+        )
+      : 0;
+  }
+
+  #setLiabilityCredits(
+    campaignId,
+    credits
+  ) {
+    assertNonNegativeInteger(
+      credits,
+      "liability credits"
+    );
+
+    this.#db
+      .prepare(`
+INSERT INTO campaign_funding_liabilities (
+  campaign_id,
+  outstanding_credits
+) VALUES (?, ?)
+ON CONFLICT(campaign_id)
+DO UPDATE SET
+  outstanding_credits =
+    excluded.outstanding_credits
+`)
+      .run(
+        String(campaignId),
+        credits
+      );
+  }
+
+  #creditPool(
+    poolId,
+    credits
+  ) {
+    assertNonNegativeInteger(
+      credits,
+      "credits"
+    );
+
+    if (credits === 0) {
+      return Object.freeze({
+        availableAdded: 0,
+        liabilityPaid: 0,
+        outstandingLiabilityCredits:
+          this.#campaignIdForPool(
+            poolId
+          )
+            ? this.#liabilityCredits(
+                this.#campaignIdForPool(
+                  poolId
+                )
+              )
+            : 0
+      });
+    }
+
+    const campaignId =
+      this.#campaignIdForPool(
+        poolId
+      );
+
+    if (!campaignId) {
+      this.#db
+        .prepare(
+          "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
+        )
+        .run(
+          credits,
+          String(poolId)
+        );
+
+      return Object.freeze({
+        availableAdded:
+          credits,
+        liabilityPaid: 0,
+        outstandingLiabilityCredits:
+          0
+      });
+    }
+
+    const liability =
+      this.#liabilityCredits(
+        campaignId
+      );
+
+    const liabilityPaid =
+      Math.min(
+        credits,
+        liability
+      );
+
+    const availableAdded =
+      credits -
+      liabilityPaid;
+
+    this.#setLiabilityCredits(
+      campaignId,
+      liability -
+        liabilityPaid
+    );
+
+    if (availableAdded > 0) {
+      this.#db
+        .prepare(
+          "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
+        )
+        .run(
+          availableAdded,
+          String(poolId)
+        );
+    }
+
+    return Object.freeze({
+      availableAdded,
+      liabilityPaid,
+      outstandingLiabilityCredits:
+        liability -
+        liabilityPaid
+    });
+  }
+
   #releaseGrantRow(row) {
     this.#db
       .prepare(`
 UPDATE sponsor_pools
-SET available_credits =
-      available_credits + ?,
-    reserved_credits =
+SET reserved_credits =
       reserved_credits - ?
 WHERE id = ?
 `)
       .run(
         row.compute_units,
-        row.compute_units,
         row.pool_id
       );
+
+    this.#creditPool(
+      row.pool_id,
+      Number(
+        row.compute_units
+      )
+    );
 
     this.#db
       .prepare(
@@ -886,6 +1075,11 @@ INSERT INTO sponsor_campaigns (
             )
           );
 
+        this.#setLiabilityCredits(
+          normalized.campaignId,
+          0
+        );
+
         return this.campaignSnapshot(
           normalized.campaignId
         );
@@ -1063,6 +1257,9 @@ SELECT
 FROM sponsor_campaigns c
 JOIN sponsor_pools p
   ON p.id = c.pool_id
+LEFT JOIN campaign_funding_liabilities l
+  ON l.campaign_id = c.campaign_id
+WHERE COALESCE(l.outstanding_credits, 0) = 0
 ORDER BY c.priority DESC, c.campaign_id
 `)
         .all();
@@ -1407,13 +1604,10 @@ WHERE id = ?
           );
         }
 
-        this.#db
-          .prepare(
-            "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
-          )
-          .run(
-            receipt.credits,
-            campaignRow.pool_id
+        const allocation =
+          this.#creditPool(
+            campaignRow.pool_id,
+            receipt.credits
           );
 
         this.#db
@@ -1474,9 +1668,491 @@ INSERT INTO funding_deposits (
             ),
           credits:
             receipt.credits,
+          availableAdded:
+            allocation
+              .availableAdded,
+          liabilityPaid:
+            allocation
+              .liabilityPaid,
+          outstandingLiabilityCredits:
+            allocation
+              .outstandingLiabilityCredits,
           receiptHash
         });
       }
+    );
+  }
+
+  findFundingDepositByExternalReference(
+    sourceId,
+    externalReference
+  ) {
+    const row =
+      this.#db
+        .prepare(
+          "SELECT * FROM funding_deposits WHERE source_id = ? AND external_reference = ?"
+        )
+        .get(
+          String(sourceId),
+          String(
+            externalReference
+          )
+        );
+
+    if (!row) {
+      return null;
+    }
+
+    return Object.freeze({
+      depositId:
+        String(
+          row.deposit_id
+        ),
+      sourceId:
+        String(
+          row.source_id
+        ),
+      campaignId:
+        String(
+          row.campaign_id
+        ),
+      asset:
+        String(
+          row.asset
+        ),
+      credits:
+        Number(
+          row.credits
+        ),
+      externalReference:
+        row.external_reference ??
+        null,
+      occurredAt:
+        String(
+          row.occurred_at
+        ),
+      receiptHash:
+        String(
+          row.receipt_hash
+        ),
+      receipt:
+        JSON.parse(
+          row.receipt_json
+        )
+    });
+  }
+
+  applyFundingReversal(
+    receipt,
+    fundingSourceRegistry
+  ) {
+    if (
+      !verifyFundingReversal(
+        receipt,
+        fundingSourceRegistry
+      )
+    ) {
+      throw new Error(
+        "funding reversal verification failed"
+      );
+    }
+
+    const receiptJson =
+      canonicalJson(
+        receipt
+      );
+
+    const receiptHash =
+      createHash("sha256")
+        .update(
+          receiptJson
+        )
+        .digest("hex");
+
+    return this.#transaction(
+      () => {
+        const existing =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_reversals WHERE reversal_id = ?"
+            )
+            .get(
+              String(
+                receipt.reversalId
+              )
+            );
+
+        if (existing) {
+          if (
+            String(
+              existing.receipt_hash
+            ) !==
+            receiptHash
+          ) {
+            throw new Error(
+              "funding reversal idempotency conflict"
+            );
+          }
+
+          return Object.freeze({
+            applied: false,
+            idempotent: true,
+            reversalId:
+              String(
+                existing.reversal_id
+              ),
+            originalDepositId:
+              String(
+                existing.original_deposit_id
+              ),
+            campaignId:
+              String(
+                existing.campaign_id
+              ),
+            credits:
+              Number(
+                existing.credits
+              ),
+            receiptHash:
+              String(
+                existing.receipt_hash
+              ),
+            outstandingLiabilityCredits:
+              this.#liabilityCredits(
+                existing.campaign_id
+              )
+          });
+        }
+
+        const deposit =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_deposits WHERE deposit_id = ?"
+            )
+            .get(
+              String(
+                receipt.originalDepositId
+              )
+            );
+
+        if (!deposit) {
+          throw new Error(
+            "unknown original funding deposit"
+          );
+        }
+
+        if (
+          String(
+            deposit.source_id
+          ) !==
+            String(
+              receipt.sourceId
+            ) ||
+          String(
+            deposit.campaign_id
+          ) !==
+            String(
+              receipt.campaignId
+            ) ||
+          String(
+            deposit.asset
+          ) !==
+            String(
+              receipt.asset
+            )
+        ) {
+          throw new Error(
+            "funding reversal does not match original deposit"
+          );
+        }
+
+        const prior =
+          this.#db
+            .prepare(`
+SELECT COALESCE(SUM(credits), 0) AS reversed
+FROM funding_reversals
+WHERE original_deposit_id = ?
+`)
+            .get(
+              String(
+                receipt.originalDepositId
+              )
+            );
+
+        const priorReversed =
+          Number(
+            prior.reversed
+          );
+
+        if (
+          priorReversed +
+            receipt.credits >
+          Number(
+            deposit.credits
+          )
+        ) {
+          throw new Error(
+            "funding reversal exceeds remaining deposit credits"
+          );
+        }
+
+        const duplicateReference =
+          receipt.externalReference ===
+            null
+            ? null
+            : this.#db
+                .prepare(
+                  "SELECT * FROM funding_reversals WHERE source_id = ? AND external_reference = ?"
+                )
+                .get(
+                  String(
+                    receipt.sourceId
+                  ),
+                  String(
+                    receipt.externalReference
+                  )
+                );
+
+        if (duplicateReference) {
+          throw new Error(
+            "funding reversal external reference already applied"
+          );
+        }
+
+        const campaignRow =
+          this.#campaignRow(
+            receipt.campaignId
+          );
+
+        if (!campaignRow) {
+          throw new Error(
+            "unknown campaign"
+          );
+        }
+
+        const pool =
+          this.#poolRow(
+            campaignRow.pool_id
+          );
+
+        const available =
+          Number(
+            pool.available_credits
+          );
+
+        const availableDebited =
+          Math.min(
+            available,
+            receipt.credits
+          );
+
+        const liabilityAdded =
+          receipt.credits -
+          availableDebited;
+
+        if (
+          availableDebited > 0
+        ) {
+          this.#db
+            .prepare(
+              "UPDATE sponsor_pools SET available_credits = available_credits - ? WHERE id = ?"
+            )
+            .run(
+              availableDebited,
+              campaignRow.pool_id
+            );
+        }
+
+        const outstanding =
+          this.#liabilityCredits(
+            receipt.campaignId
+          ) +
+          liabilityAdded;
+
+        this.#setLiabilityCredits(
+          receipt.campaignId,
+          outstanding
+        );
+
+        this.#db
+          .prepare(`
+INSERT INTO funding_reversals (
+  reversal_id,
+  source_id,
+  original_deposit_id,
+  campaign_id,
+  asset,
+  credits,
+  reason,
+  external_reference,
+  occurred_at,
+  receipt_hash,
+  receipt_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+          .run(
+            String(
+              receipt.reversalId
+            ),
+            String(
+              receipt.sourceId
+            ),
+            String(
+              receipt.originalDepositId
+            ),
+            String(
+              receipt.campaignId
+            ),
+            String(
+              receipt.asset
+            ),
+            receipt.credits,
+            String(
+              receipt.reason
+            ),
+            receipt.externalReference ===
+              null
+              ? null
+              : String(
+                  receipt.externalReference
+                ),
+            String(
+              receipt.occurredAt
+            ),
+            receiptHash,
+            receiptJson
+          );
+
+        return Object.freeze({
+          applied: true,
+          idempotent: false,
+          reversalId:
+            String(
+              receipt.reversalId
+            ),
+          originalDepositId:
+            String(
+              receipt.originalDepositId
+            ),
+          campaignId:
+            String(
+              receipt.campaignId
+            ),
+          credits:
+            receipt.credits,
+          reason:
+            String(
+              receipt.reason
+            ),
+          availableDebited,
+          liabilityAdded,
+          outstandingLiabilityCredits:
+            outstanding,
+          receiptHash
+        });
+      }
+    );
+  }
+
+  listFundingReversals({
+    campaignId = null,
+    sourceId = null,
+    originalDepositId = null
+  } = {}) {
+    const clauses = [];
+    const params = [];
+
+    if (campaignId !== null) {
+      clauses.push(
+        "campaign_id = ?"
+      );
+      params.push(
+        String(campaignId)
+      );
+    }
+
+    if (sourceId !== null) {
+      clauses.push(
+        "source_id = ?"
+      );
+      params.push(
+        String(sourceId)
+      );
+    }
+
+    if (
+      originalDepositId !==
+      null
+    ) {
+      clauses.push(
+        "original_deposit_id = ?"
+      );
+      params.push(
+        String(
+          originalDepositId
+        )
+      );
+    }
+
+    const where =
+      clauses.length > 0
+        ? ` WHERE ${clauses.join(" AND ")}`
+        : "";
+
+    return Object.freeze(
+      this.#db
+        .prepare(
+          `SELECT * FROM funding_reversals${where} ORDER BY occurred_at, reversal_id`
+        )
+        .all(...params)
+        .map(
+          (row) =>
+            Object.freeze({
+              reversalId:
+                String(
+                  row.reversal_id
+                ),
+              sourceId:
+                String(
+                  row.source_id
+                ),
+              originalDepositId:
+                String(
+                  row.original_deposit_id
+                ),
+              campaignId:
+                String(
+                  row.campaign_id
+                ),
+              asset:
+                String(
+                  row.asset
+                ),
+              credits:
+                Number(
+                  row.credits
+                ),
+              reason:
+                String(
+                  row.reason
+                ),
+              externalReference:
+                row.external_reference ??
+                null,
+              occurredAt:
+                String(
+                  row.occurred_at
+                ),
+              receiptHash:
+                String(
+                  row.receipt_hash
+                ),
+              receipt:
+                JSON.parse(
+                  row.receipt_json
+                )
+            })
+        )
     );
   }
 
@@ -1571,7 +2247,7 @@ INSERT INTO funding_deposits (
       return null;
     }
 
-    const row =
+    const deposits =
       this.#db
         .prepare(`
 SELECT
@@ -1586,9 +2262,29 @@ WHERE campaign_id = ?
           )
         );
 
+    const reversals =
+      this.#db
+        .prepare(`
+SELECT
+  COUNT(*) AS reversal_count,
+  COALESCE(SUM(credits), 0) AS reversed_credits
+FROM funding_reversals
+WHERE campaign_id = ?
+`)
+        .get(
+          String(
+            campaignId
+          )
+        );
+
+    const liability =
+      this.#liabilityCredits(
+        campaignId
+      );
+
     return Object.freeze({
       schema:
-        "sponsorrail.funding-snapshot.v0.13",
+        "sponsorrail.funding-snapshot.v0.15",
       campaignId:
         String(
           campaignId
@@ -1597,12 +2293,29 @@ WHERE campaign_id = ?
         campaign.budgetCredits,
       verifiedDepositCount:
         Number(
-          row.deposit_count
+          deposits.deposit_count
         ),
       verifiedDepositCredits:
         Number(
-          row.verified_credits
+          deposits.verified_credits
         ),
+      verifiedReversalCount:
+        Number(
+          reversals.reversal_count
+        ),
+      verifiedReversalCredits:
+        Number(
+          reversals.reversed_credits
+        ),
+      netVerifiedFundingCredits:
+        Number(
+          deposits.verified_credits
+        ) -
+        Number(
+          reversals.reversed_credits
+        ),
+      outstandingLiabilityCredits:
+        liability,
       currentAvailableCredits:
         campaign.pool
           .availableCredits,
@@ -1686,6 +2399,9 @@ SELECT
 FROM sponsor_pools p
 JOIN sponsor_campaigns c
   ON c.pool_id = p.id
+LEFT JOIN campaign_funding_liabilities l
+  ON l.campaign_id = c.campaign_id
+WHERE COALESCE(l.outstanding_credits, 0) = 0
 ORDER BY c.priority DESC, c.campaign_id
 `)
             .all();
@@ -2025,20 +2741,22 @@ WHERE grant_id = ?
           this.#db
             .prepare(`
 UPDATE sponsor_pools
-SET available_credits =
-      available_credits + ?,
-    reserved_credits =
+SET reserved_credits =
       reserved_credits - ?,
     spent_credits =
       spent_credits + ?
 WHERE id = ?
 `)
             .run(
-              refundUnits,
               row.compute_units,
               usedUnits,
               row.pool_id
             );
+
+          this.#creditPool(
+            row.pool_id,
+            refundUnits
+          );
 
           this.#db
             .prepare(

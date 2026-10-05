@@ -10,6 +10,49 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.15 — funding reversals, refunds, disputes, and liabilities
+
+v0.15 adds the money-out correction path.
+
+Verified funding can now be reversed by the same trusted funding source that originally issued it. Reversals are signed, idempotent, bounded by the original deposit, and append-only.
+
+### Reversal rule
+
+A reversal never deletes prior funding or compute history.
+
+```text
+verified deposit
+      |
+      v
+refund / final dispute loss
+      |
+      v
+signed funding reversal
+      |
+      +-- debit available credits first
+      +-- preserve reserved credits
+      +-- preserve spent history
+      +-- record liability if credits are already committed/spent
+```
+
+Future deposits and returned reservations pay outstanding liability before becoming spendable.
+
+### Stripe v0.15 behavior
+
+The Stripe adapter now links Checkout deposits to the Checkout Session's PaymentIntent and can process:
+
+- successful `refund.created`
+- successful `refund.updated`
+- final `charge.dispute.closed` with `status=lost`
+
+Pending/failed refunds and won/non-final disputes do not mutate SponsorRail funding.
+
+### Demo
+
+```bash
+npm run demo:reversal
+```
+
 ## v0.14 — Stripe Checkout funding adapter
 
 v0.14 connects the first real external funding rail to SponsorRail's signed-deposit protocol.
@@ -589,6 +632,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Sponsor campaigns](docs/campaigns.md)
 - [Funding provenance](docs/funding.md)
 - [Stripe Checkout funding](docs/stripe-checkout.md)
+- [Funding reversals](docs/reversals.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -597,7 +641,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.14 boundaries
+### Known v0.15 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
@@ -611,7 +655,7 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
 - SQLite now persists campaign contracts, campaign pools, grant campaign snapshots, and transactional campaign authorization
-- the Stripe Checkout adapter verifies webhook evidence and maps paid Checkout Sessions into SponsorRail deposits; it does not create Checkout Sessions or reconcile payouts/refunds
+- the Stripe Checkout adapter now handles successful refunds and final lost disputes, but temporary dispute holds and payout reconciliation remain future work
 - signed funding deposits prove source-side credit issuance but do not yet perform fiat/card/bank settlement themselves
 - campaign pools may contain both operator-seeded and verified deposited credits; per-task lot tracing is not claimed
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work

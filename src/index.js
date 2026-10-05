@@ -60,7 +60,8 @@ export {
   FundingSourceRegistry,
   SignedFundingSource,
   createFundingSourceKeyPair,
-  verifyFundingDeposit
+  verifyFundingDeposit,
+  verifyFundingReversal
 } from "./funding.js";
 
 export {

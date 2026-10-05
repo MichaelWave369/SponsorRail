@@ -341,3 +341,42 @@ Mitigation: the adapter defaults to `requiredLivemode=false`. Live mode must be 
 Threat: a configuration error maps a payment to an extreme number of credits.
 
 Mitigation: rates must be positive integers and operators can set `maxCreditsPerDeposit`.
+
+
+## Funding reversal threats added in v0.15
+
+### Refund replay
+
+Threat: the same refund or dispute webhook repeatedly removes credits.
+
+Mitigation: signed reversal IDs are durable idempotency keys and exact replay is a no-op.
+
+### Over-reversal
+
+Threat: multiple partial refunds or dispute events reverse more credits than the original deposit.
+
+Mitigation: aggregate reversals are bounded by original deposit credits.
+
+### Historical erasure
+
+Threat: a refund rewrites past spent-compute records to make accounting appear balanced.
+
+Mitigation: reversals are append-only. Spent and receipt history are never reduced.
+
+### Reserved-credit theft
+
+Threat: a reversal invalidates an already active execution reservation.
+
+Mitigation: reversals debit available credits only. Any shortfall becomes campaign liability.
+
+### Liability bypass
+
+Threat: a campaign with outstanding refund liability continues authorizing new sponsored tasks.
+
+Mitigation: campaign matching and authorization exclude campaigns with non-zero funding liability.
+
+### Conversion policy drift
+
+Threat: a Stripe credit conversion rate changes between payment and later partial refund.
+
+Mitigation boundary: a Stripe funding source ID should represent an immutable conversion policy. Operators must rotate the source ID when changing `creditsPerMinorUnit`. Per-deposit conversion-policy snapshots are future hardening.

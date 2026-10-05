@@ -138,3 +138,35 @@ externalReference = stripe-checkout:<session-id>
 ```
 
 This makes webhook retry idempotency line up with SponsorRail deposit idempotency.
+
+
+## Funding reversals v0.15
+
+`SignedFundingSource.issueReversal()` creates a signed negative adjustment referencing one original funding deposit.
+
+A reversal records:
+
+- reversal ID
+- funding source ID
+- original deposit ID
+- campaign ID
+- asset
+- credits
+- reason
+- optional external reference
+- occurrence timestamp
+- Ed25519 signature
+
+Supported generic reasons are `refund`, `dispute_loss`, `chargeback`, and `adjustment`.
+
+A reversal must come from the same funding source, campaign, and asset as the original deposit.
+
+Aggregate reversals cannot exceed the original deposit's credits.
+
+### Liability
+
+If a reversal is larger than currently available campaign credits, SponsorRail debits all available credits and records the remainder as funding liability.
+
+It does not reduce reserved credits or rewrite spent history.
+
+Returned reservations, settlement refunds, and new deposits flow through the same liability gate: liability is paid before credits become newly available.

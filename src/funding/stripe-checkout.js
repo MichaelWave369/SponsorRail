@@ -13,6 +13,12 @@ const ACCEPTED_EVENTS =
     "checkout.session.async_payment_succeeded"
   ]);
 
+const REFUND_EVENTS =
+  new Set([
+    "refund.created",
+    "refund.updated"
+  ]);
+
 function normalizeRawBody(
   rawBody
 ) {
@@ -382,6 +388,16 @@ function assertCheckoutSession(
     );
   }
 
+  if (
+    typeof session.payment_intent !==
+      "string" ||
+    !session.payment_intent
+  ) {
+    throw new Error(
+      "Stripe Checkout Session payment_intent is required"
+    );
+  }
+
   return session;
 }
 
@@ -473,7 +489,7 @@ export class StripeCheckoutFundingAdapter {
       });
   }
 
-  handleWebhook({
+  #parseVerifiedEvent({
     rawBody,
     signatureHeader
   }) {
@@ -520,18 +536,31 @@ export class StripeCheckoutFundingAdapter {
       );
     }
 
-    const session =
-      assertCheckoutSession(
-        event
-      );
+    return event;
+  }
 
-    const currency =
-      session.currency
+  #creditsFor(
+    amountMinor,
+    currency
+  ) {
+    if (
+      !Number.isInteger(
+        amountMinor
+      ) ||
+      amountMinor <= 0
+    ) {
+      throw new Error(
+        "Stripe amount must be positive"
+      );
+    }
+
+    const normalizedCurrency =
+      String(currency)
         .toLowerCase();
 
     const rate =
       this.creditRates[
-        currency
+        normalizedCurrency
       ];
 
     if (
@@ -543,7 +572,7 @@ export class StripeCheckoutFundingAdapter {
     }
 
     const credits =
-      session.amount_total *
+      amountMinor *
       rate;
 
     if (
@@ -568,6 +597,37 @@ export class StripeCheckoutFundingAdapter {
       );
     }
 
+    return {
+      currency:
+        normalizedCurrency,
+      credits
+    };
+  }
+
+  handleWebhook({
+    rawBody,
+    signatureHeader
+  }) {
+    const event =
+      this.#parseVerifiedEvent({
+        rawBody,
+        signatureHeader
+      });
+
+    const session =
+      assertCheckoutSession(
+        event
+      );
+
+    const {
+      currency,
+      credits
+    } =
+      this.#creditsFor(
+        session.amount_total,
+        session.currency
+      );
+
     const occurredAt =
       session.created *
       1000;
@@ -581,7 +641,7 @@ export class StripeCheckoutFundingAdapter {
           depositId:
             `stripe-checkout:${session.id}`,
           externalReference:
-            `stripe-checkout:${session.id}`,
+            `stripe-payment-intent:${session.payment_intent}`,
           occurredAt
         });
 
@@ -594,6 +654,10 @@ export class StripeCheckoutFundingAdapter {
           String(event.type),
         checkoutSessionId:
           String(session.id),
+        paymentIntentId:
+          String(
+            session.payment_intent
+          ),
         livemode:
           event.livemode ===
           true,
@@ -637,6 +701,247 @@ export class StripeCheckoutFundingAdapter {
     return Object.freeze({
       ...mapped,
       deposit
+    });
+  }
+
+  handleReversalWebhook({
+    rawBody,
+    signatureHeader,
+    broker,
+    fundingSourceRegistry
+  }) {
+    if (
+      !broker ||
+      typeof broker
+        .applyFundingReversal !==
+        "function" ||
+      typeof broker
+        .findFundingDepositByExternalReference !==
+        "function"
+    ) {
+      throw new TypeError(
+        "broker with reversal funding APIs is required"
+      );
+    }
+
+    const event =
+      this.#parseVerifiedEvent({
+        rawBody,
+        signatureHeader
+      });
+
+    const object =
+      event.data?.object;
+
+    let reason;
+    let reversalId;
+    let externalReference;
+    let paymentIntentId;
+    let amountMinor;
+    let currency;
+    let occurredAt;
+
+    if (
+      REFUND_EVENTS.has(
+        event.type
+      )
+    ) {
+      if (
+        !object ||
+        object.object !==
+          "refund" ||
+        !object.id
+      ) {
+        throw new Error(
+          "Stripe refund event does not contain a Refund"
+        );
+      }
+
+      if (
+        object.status !==
+          "succeeded"
+      ) {
+        return Object.freeze({
+          accepted: false,
+          ignored: true,
+          reason:
+            "REFUND_NOT_SUCCEEDED",
+          stripeEventId:
+            String(event.id)
+        });
+      }
+
+      if (
+        typeof object.payment_intent !==
+          "string" ||
+        !object.payment_intent
+      ) {
+        throw new Error(
+          "Stripe Refund payment_intent is required"
+        );
+      }
+
+      reason = "refund";
+      reversalId =
+        `stripe-refund:${object.id}`;
+      externalReference =
+        `stripe-refund:${object.id}`;
+      paymentIntentId =
+        object.payment_intent;
+      amountMinor =
+        object.amount;
+      currency =
+        object.currency;
+      occurredAt =
+        object.created;
+    } else if (
+      event.type ===
+        "charge.dispute.closed"
+    ) {
+      if (
+        !object ||
+        object.object !==
+          "dispute" ||
+        !object.id
+      ) {
+        throw new Error(
+          "Stripe dispute event does not contain a Dispute"
+        );
+      }
+
+      if (
+        object.status !==
+          "lost"
+      ) {
+        return Object.freeze({
+          accepted: false,
+          ignored: true,
+          reason:
+            "DISPUTE_NOT_LOST",
+          stripeEventId:
+            String(event.id),
+          disputeStatus:
+            String(
+              object.status ??
+              "unknown"
+            )
+        });
+      }
+
+      if (
+        typeof object.payment_intent !==
+          "string" ||
+        !object.payment_intent
+      ) {
+        throw new Error(
+          "Stripe Dispute payment_intent is required"
+        );
+      }
+
+      reason =
+        "dispute_loss";
+      reversalId =
+        `stripe-dispute:${object.id}`;
+      externalReference =
+        `stripe-dispute:${object.id}`;
+      paymentIntentId =
+        object.payment_intent;
+      amountMinor =
+        object.amount;
+      currency =
+        object.currency;
+      occurredAt =
+        object.created;
+    } else {
+      return Object.freeze({
+        accepted: false,
+        ignored: true,
+        reason:
+          "UNSUPPORTED_REVERSAL_EVENT",
+        stripeEventId:
+          String(
+            event.id ??
+            "unknown"
+          )
+      });
+    }
+
+    if (
+      !Number.isInteger(
+        occurredAt
+      ) ||
+      occurredAt <= 0
+    ) {
+      throw new Error(
+        "Stripe reversal created timestamp is required"
+      );
+    }
+
+    const {
+      currency:
+        normalizedCurrency,
+      credits
+    } =
+      this.#creditsFor(
+        amountMinor,
+        currency
+      );
+
+    const originalDeposit =
+      broker
+        .findFundingDepositByExternalReference(
+          this.source.sourceId,
+          `stripe-payment-intent:${paymentIntentId}`
+        );
+
+    if (!originalDeposit) {
+      throw new Error(
+        "no matching SponsorRail Stripe deposit"
+      );
+    }
+
+    const reversalReceipt =
+      this.source
+        .issueReversal({
+          originalDepositId:
+            originalDeposit.depositId,
+          campaignId:
+            originalDeposit.campaignId,
+          credits,
+          reason,
+          reversalId,
+          externalReference,
+          occurredAt:
+            occurredAt * 1000
+        });
+
+    const reversal =
+      broker
+        .applyFundingReversal(
+          reversalReceipt,
+          fundingSourceRegistry
+        );
+
+    return Object.freeze({
+      accepted: true,
+      stripe: Object.freeze({
+        eventId:
+          String(event.id),
+        eventType:
+          String(event.type),
+        objectId:
+          String(object.id),
+        paymentIntentId:
+          String(paymentIntentId),
+        livemode:
+          event.livemode === true,
+        currency:
+          normalizedCurrency,
+        amountMinor
+      }),
+      credits,
+      reversalReceipt,
+      reversal
     });
   }
 }

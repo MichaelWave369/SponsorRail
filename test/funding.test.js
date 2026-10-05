@@ -5,7 +5,8 @@ import {
   FundingSourceRegistry,
   SignedFundingSource,
   createFundingSourceKeyPair,
-  verifyFundingDeposit
+  verifyFundingDeposit,
+  verifyFundingReversal
 } from "../src/index.js";
 
 function source() {
@@ -156,6 +157,133 @@ test(
         "depositId",
         "externalReference",
         "occurredAt",
+        "schema",
+        "signature",
+        "sourceId"
+      ]
+    );
+  }
+);
+
+
+test(
+  "funding source issues signed reversal receipt",
+  () => {
+    const {
+      fundingSource,
+      registry
+    } = source();
+
+    const reversal =
+      fundingSource
+        .issueReversal({
+          originalDepositId:
+            "deposit-1",
+          campaignId:
+            "campaign-1",
+          credits: 7,
+          reason: "refund",
+          reversalId:
+            "reversal-1",
+          externalReference:
+            "refund-1"
+        });
+
+    assert.equal(
+      reversal.schema,
+      "sponsorrail.funding-reversal.v0.15"
+    );
+
+    assert.equal(
+      verifyFundingReversal(
+        reversal,
+        registry
+      ),
+      true
+    );
+  }
+);
+
+test(
+  "tampered reversal and unsupported reason fail verification",
+  () => {
+    const {
+      fundingSource,
+      registry
+    } = source();
+
+    const reversal =
+      fundingSource
+        .issueReversal({
+          originalDepositId:
+            "deposit-1",
+          campaignId:
+            "campaign-1",
+          credits: 7,
+          reason: "refund"
+        });
+
+    assert.equal(
+      verifyFundingReversal(
+        {
+          ...reversal,
+          credits: 70
+        },
+        registry
+      ),
+      false
+    );
+
+    assert.throws(
+      () =>
+        fundingSource
+          .issueReversal({
+            originalDepositId:
+              "deposit-1",
+            campaignId:
+              "campaign-1",
+            credits: 1,
+            reason:
+              "mysterious-money-vanishing"
+          }),
+      /unsupported funding reversal reason/
+    );
+  }
+);
+
+test(
+  "funding reversal schema contains no prompt source output or identity fields",
+  () => {
+    const {
+      fundingSource
+    } = source();
+
+    const reversal =
+      fundingSource
+        .issueReversal({
+          originalDepositId:
+            "deposit-1",
+          campaignId:
+            "campaign-1",
+          credits: 7,
+          reason:
+            "dispute_loss",
+          externalReference:
+            "dispute-1"
+        });
+
+    assert.deepEqual(
+      Object.keys(reversal)
+        .sort(),
+      [
+        "asset",
+        "campaignId",
+        "credits",
+        "externalReference",
+        "occurredAt",
+        "originalDepositId",
+        "reason",
+        "reversalId",
         "schema",
         "signature",
         "sourceId"

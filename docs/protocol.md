@@ -529,3 +529,43 @@ stripe-checkout:<session-id>
 ```
 
 Webhook event IDs are recorded as Stripe transport evidence but do not create separate funding lots for the same Checkout Session.
+
+
+## Funding reversal protocol v0.15
+
+```json
+{
+  "schema": "sponsorrail.funding-reversal.v0.15",
+  "reversalId": "uuid",
+  "sourceId": "source.example",
+  "originalDepositId": "deposit-uuid",
+  "campaignId": "campaign-1",
+  "asset": "compute-credits",
+  "credits": 500,
+  "reason": "refund",
+  "externalReference": "refund-reference",
+  "occurredAt": "2026-10-05T04:00:00.000Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "value": "base64"
+  }
+}
+```
+
+A conforming funding ledger must reject:
+
+1. untrusted or disabled funding sources
+2. invalid signatures
+3. unknown original deposits
+4. source/campaign/asset mismatch with the original deposit
+5. aggregate reversals exceeding original deposit credits
+6. mutated replay under the same reversal ID
+7. duplicate non-null external reversal references
+
+Exact replay of the same signed reversal is idempotent.
+
+### Campaign liability
+
+A campaign with outstanding funding liability is ineligible for new campaign authorization.
+
+Credits returned from grant release or unused settlement, as well as new deposits, must pay liability before becoming available for new work.

@@ -167,17 +167,12 @@ export class FundingSourceRegistry {
     );
   }
 
-  verify(receipt) {
-    if (
-      receipt?.schema !==
-      "sponsorrail.funding-deposit.v0.13"
-    ) {
-      return false;
-    }
-
+  #verifySourceAndSignature(
+    receipt
+  ) {
     const source =
       this.get(
-        receipt.sourceId
+        receipt?.sourceId
       );
 
     if (
@@ -190,6 +185,20 @@ export class FundingSourceRegistry {
     if (
       receipt.asset !==
       source.asset
+    ) {
+      return false;
+    }
+
+    return verifyReceipt(
+      receipt,
+      source.publicKey
+    );
+  }
+
+  verify(receipt) {
+    if (
+      receipt?.schema !==
+      "sponsorrail.funding-deposit.v0.13"
     ) {
       return false;
     }
@@ -210,10 +219,54 @@ export class FundingSourceRegistry {
       return false;
     }
 
-    return verifyReceipt(
-      receipt,
-      source.publicKey
-    );
+    return this
+      .#verifySourceAndSignature(
+        receipt
+      );
+  }
+
+  verifyReversal(receipt) {
+    if (
+      receipt?.schema !==
+      "sponsorrail.funding-reversal.v0.15"
+    ) {
+      return false;
+    }
+
+    if (
+      !receipt.reversalId ||
+      !receipt.originalDepositId ||
+      !receipt.campaignId
+    ) {
+      return false;
+    }
+
+    if (
+      ![
+        "refund",
+        "dispute_loss",
+        "chargeback",
+        "adjustment"
+      ].includes(
+        receipt.reason
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      !Number.isInteger(
+        receipt.credits
+      ) ||
+      receipt.credits <= 0
+    ) {
+      return false;
+    }
+
+    return this
+      .#verifySourceAndSignature(
+        receipt
+      );
   }
 }
 
@@ -308,6 +361,87 @@ export class SignedFundingSource {
       this.privateKey
     );
   }
+
+  issueReversal({
+    originalDepositId,
+    campaignId,
+    credits,
+    reason,
+    reversalId =
+      randomUUID(),
+    externalReference =
+      null,
+    occurredAt =
+      null
+  }) {
+    if (
+      !originalDepositId ||
+      !campaignId
+    ) {
+      throw new TypeError(
+        "originalDepositId and campaignId are required"
+      );
+    }
+
+    if (
+      ![
+        "refund",
+        "dispute_loss",
+        "chargeback",
+        "adjustment"
+      ].includes(reason)
+    ) {
+      throw new TypeError(
+        "unsupported funding reversal reason"
+      );
+    }
+
+    assertPositiveInteger(
+      credits,
+      "credits"
+    );
+
+    const payload = {
+      schema:
+        "sponsorrail.funding-reversal.v0.15",
+      reversalId:
+        String(
+          reversalId
+        ),
+      sourceId:
+        this.sourceId,
+      originalDepositId:
+        String(
+          originalDepositId
+        ),
+      campaignId:
+        String(
+          campaignId
+        ),
+      asset:
+        this.asset,
+      credits,
+      reason:
+        String(reason),
+      externalReference:
+        externalReference ===
+          null
+          ? null
+          : String(
+              externalReference
+            ),
+      occurredAt:
+        normalizeOccurredAt(
+          occurredAt,
+          this.now
+        )
+    };
+
+    return signReceipt(
+      payload,
+      this.privateKey
+    );
+  }
 }
 
 export function verifyFundingDeposit(
@@ -327,4 +461,26 @@ export function verifyFundingDeposit(
   return registry.verify(
     receipt
   );
+}
+
+
+export function verifyFundingReversal(
+  receipt,
+  registry
+) {
+  if (
+    !registry ||
+    typeof registry
+      .verifyReversal !==
+      "function"
+  ) {
+    throw new TypeError(
+      "funding source registry is required"
+    );
+  }
+
+  return registry
+    .verifyReversal(
+      receipt
+    );
 }

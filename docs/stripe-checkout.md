@@ -145,3 +145,44 @@ A compromise of one trust boundary should not automatically become a credential 
 v0.14 does not model refunds, disputes, chargebacks, payout settlement, taxes as separate SponsorRail ledger events, or Stripe Connect account attribution.
 
 Those deserve explicit reversal/reconciliation semantics rather than pretending money only travels in one direction forever.
+
+
+## Refunds and disputes
+
+v0.15 adds conservative Stripe reversal handling.
+
+The adapter accepts successful Refund objects from:
+
+```text
+refund.created
+refund.updated
+```
+
+Only `status=succeeded` changes SponsorRail funding. Pending, failed, canceled, or action-required refunds are ignored until Stripe reports a successful refund event.
+
+For disputes, SponsorRail processes:
+
+```text
+charge.dispute.closed
+status = lost
+```
+
+A won dispute does not reduce SponsorRail credits. Non-final dispute states are not treated as permanent funding loss in v0.15.
+
+### PaymentIntent correlation
+
+The original Checkout funding deposit stores its external funding reference as:
+
+```text
+stripe-payment-intent:<pi_...>
+```
+
+Refund and dispute objects can therefore resolve back to the original SponsorRail deposit through their PaymentIntent ID.
+
+### Partial refunds
+
+Refund/dispute amount in Stripe minor units is converted using the adapter's configured `creditsPerMinorUnit` mapping.
+
+A funding source ID should represent one immutable conversion policy. If the conversion changes, rotate the source ID rather than reusing it.
+
+The generic reversal ledger independently prevents aggregate reversals from exceeding the original SponsorRail deposit credits.
