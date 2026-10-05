@@ -3,6 +3,35 @@ import {
   randomUUID
 } from "node:crypto";
 
+export class ProviderUnavailableError extends Error {
+  constructor(
+    message,
+    {
+      code =
+        "PROVIDER_UNAVAILABLE"
+    } = {}
+  ) {
+    super(message);
+
+    this.name =
+      "ProviderUnavailableError";
+
+    this.code =
+      String(code);
+
+    this.safeToRetry =
+      true;
+  }
+}
+
+export function isSafeProviderRetry(
+  error
+) {
+  return (
+    error?.safeToRetry === true
+  );
+}
+
 import {
   buildExecutionAuthorization,
   buildModelContext,
@@ -487,7 +516,7 @@ export async function executeSponsoredProviderTask({
 
   const receiptPayload = {
     schema:
-      "sponsorrail.receipt.v0.6",
+      "sponsorrail.receipt.v0.9",
     runId:
       randomUUID(),
     taskId:
