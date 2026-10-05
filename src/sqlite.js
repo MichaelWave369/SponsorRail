@@ -592,21 +592,180 @@ INSERT OR IGNORE INTO meta(key, value)
       .get(String(grantId));
   }
 
+  #campaignIdForPool(
+    poolId
+  ) {
+    const row =
+      this.#db
+        .prepare(
+          "SELECT campaign_id FROM sponsor_campaigns WHERE pool_id = ?"
+        )
+        .get(
+          String(poolId)
+        );
+
+    return row
+      ? String(
+          row.campaign_id
+        )
+      : null;
+  }
+
+  #liabilityCredits(
+    campaignId
+  ) {
+    const row =
+      this.#db
+        .prepare(
+          "SELECT outstanding_credits FROM campaign_funding_liabilities WHERE campaign_id = ?"
+        )
+        .get(
+          String(campaignId)
+        );
+
+    return row
+      ? Number(
+          row.outstanding_credits
+        )
+      : 0;
+  }
+
+  #setLiabilityCredits(
+    campaignId,
+    credits
+  ) {
+    assertNonNegativeInteger(
+      credits,
+      "liability credits"
+    );
+
+    this.#db
+      .prepare(`
+INSERT INTO campaign_funding_liabilities (
+  campaign_id,
+  outstanding_credits
+) VALUES (?, ?)
+ON CONFLICT(campaign_id)
+DO UPDATE SET
+  outstanding_credits =
+    excluded.outstanding_credits
+`)
+      .run(
+        String(campaignId),
+        credits
+      );
+  }
+
+  #creditPool(
+    poolId,
+    credits
+  ) {
+    assertNonNegativeInteger(
+      credits,
+      "credits"
+    );
+
+    if (credits === 0) {
+      return Object.freeze({
+        availableAdded: 0,
+        liabilityPaid: 0,
+        outstandingLiabilityCredits:
+          this.#campaignIdForPool(
+            poolId
+          )
+            ? this.#liabilityCredits(
+                this.#campaignIdForPool(
+                  poolId
+                )
+              )
+            : 0
+      });
+    }
+
+    const campaignId =
+      this.#campaignIdForPool(
+        poolId
+      );
+
+    if (!campaignId) {
+      this.#db
+        .prepare(
+          "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
+        )
+        .run(
+          credits,
+          String(poolId)
+        );
+
+      return Object.freeze({
+        availableAdded:
+          credits,
+        liabilityPaid: 0,
+        outstandingLiabilityCredits:
+          0
+      });
+    }
+
+    const liability =
+      this.#liabilityCredits(
+        campaignId
+      );
+
+    const liabilityPaid =
+      Math.min(
+        credits,
+        liability
+      );
+
+    const availableAdded =
+      credits -
+      liabilityPaid;
+
+    this.#setLiabilityCredits(
+      campaignId,
+      liability -
+        liabilityPaid
+    );
+
+    if (availableAdded > 0) {
+      this.#db
+        .prepare(
+          "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
+        )
+        .run(
+          availableAdded,
+          String(poolId)
+        );
+    }
+
+    return Object.freeze({
+      availableAdded,
+      liabilityPaid,
+      outstandingLiabilityCredits:
+        liability -
+        liabilityPaid
+    });
+  }
+
   #releaseGrantRow(row) {
     this.#db
       .prepare(`
 UPDATE sponsor_pools
-SET available_credits =
-      available_credits + ?,
-    reserved_credits =
+SET reserved_credits =
       reserved_credits - ?
 WHERE id = ?
 `)
       .run(
         row.compute_units,
-        row.compute_units,
         row.pool_id
       );
+
+    this.#creditPool(
+      row.pool_id,
+      Number(
+        row.compute_units
+      )
+    );
 
     this.#db
       .prepare(
