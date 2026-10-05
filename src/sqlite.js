@@ -10,6 +10,11 @@ import {
   signReceipt
 } from "./sponsorrail.js";
 
+import {
+  campaignFundingMetadata,
+  validateSponsorCampaign
+} from "./campaign.js";
+
 const DEFAULT_GRANT_TTL_MS =
   5 * 60 * 1000;
 
@@ -200,6 +205,81 @@ function rowPolicy(row) {
   };
 }
 
+function parseJsonOrNull(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  return JSON.parse(
+    String(value)
+  );
+}
+
+function publicCampaign(
+  campaign
+) {
+  return Object.freeze({
+    campaignId:
+      campaign.campaignId,
+    sponsorDisclosure:
+      campaign.sponsorDisclosure,
+    capabilityType:
+      campaign.capabilityType,
+    benefitDescription:
+      campaign.benefitDescription,
+    disclosureLabel:
+      campaign.disclosureLabel,
+    targetingMode:
+      campaign.targetingMode,
+    priority:
+      campaign.priority,
+    experience:
+      campaign.experience
+  });
+}
+
+function normalizeCampaignPreferences({
+  allowContextual = false,
+  allowedCapabilityTypes = ["*"],
+  blockedCampaignIds = []
+} = {}) {
+  if (
+    !Array.isArray(
+      allowedCapabilityTypes
+    ) ||
+    !Array.isArray(
+      blockedCampaignIds
+    )
+  ) {
+    throw new TypeError(
+      "campaign preference lists must be arrays"
+    );
+  }
+
+  return Object.freeze({
+    allowContextual:
+      allowContextual === true,
+    allowedCapabilityTypes:
+      Object.freeze(
+        [...new Set(
+          allowedCapabilityTypes
+            .map(String)
+        )]
+      ),
+    blockedCampaignIds:
+      Object.freeze(
+        [...new Set(
+          blockedCampaignIds
+            .map(String)
+        )]
+      )
+  });
+}
+
 function mapGrant(row) {
   if (!row) {
     return null;
@@ -224,6 +304,10 @@ function mapGrant(row) {
     sponsorDisclosure:
       String(
         row.sponsor_disclosure
+      ),
+    campaign:
+      parseJsonOrNull(
+        row.campaign_json
       ),
     issuedAt:
       String(row.issued_at),
