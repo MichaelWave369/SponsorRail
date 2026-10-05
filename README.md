@@ -10,6 +10,84 @@ Money may grant compute. Money may not grant control.
 
 SponsorRail treats sponsorship as a compute grant rather than an excuse to interrupt users with miserable ads. Sponsors fund useful work while the funding plane remains separated from the agent's private execution context.
 
+## v0.17 — funding reconciliation and conservation audits
+
+v0.17 adds an audit layer over deposits, reversals, temporary holds, liabilities, reservations, and spent compute.
+
+SponsorRail can now answer two different questions:
+
+1. **Does the internal ledger conserve credits?**
+2. **Does a trusted funding source agree with SponsorRail's event totals?**
+
+### Internal conservation audit
+
+`auditCampaignFunding(campaignId)` recomputes:
+
+```text
+economic funding
+= operator seed
++ verified deposits
+- verified reversals
+
+book credits
+= available
++ reserved
++ spent
++ held
+
+liability-adjusted book
+= book credits
+- outstanding liability
+
+healthy when:
+liability-adjusted book = economic funding
+```
+
+It also checks every deposit's exposure ceiling:
+
+```text
+permanent reversals
++ active holds
+<= original deposit credits
+```
+
+### Signed funding-source statements
+
+A trusted funding source can issue an Ed25519-signed statement containing:
+
+- campaign
+- asset
+- deposited credits
+- reversed credits
+- total active hold exposure
+- statement time
+
+SponsorRail reconstructs its own source-specific ledger **as of that timestamp** and records a reconciliation report.
+
+### Mismatch rule
+
+A mismatch is evidence, not an instruction.
+
+```text
+statement disagrees with ledger
+          |
+          v
+persist mismatch report
+          |
+          X
+do NOT mutate campaign balances
+```
+
+### Historical hold reconstruction
+
+If a dispute was open at statement time but resolved later, reconciliation still counts it as open for that historical `asOf` boundary.
+
+### Demo
+
+```bash
+npm run demo:reconcile
+```
+
 ## v0.16 — temporary funding holds and dispute quarantine
 
 v0.16 models the uncertain period between a dispute opening and its final outcome.
@@ -679,6 +757,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 - [Stripe Checkout funding](docs/stripe-checkout.md)
 - [Funding reversals](docs/reversals.md)
 - [Funding holds](docs/holds.md)
+- [Funding reconciliation](docs/reconciliation.md)
 - [Threat model](docs/threat-model.md)
 
 ## Status
@@ -687,7 +766,7 @@ SponsorRail does not persist through these funding structures: prompt text, repo
 
 SponsorRail is not yet a payment processor, ad network, confidential-compute system, or production privacy guarantee.
 
-### Known v0.16 boundaries
+### Known v0.17 boundaries
 
 - the JSON state store remains single-process by design
 - the SQLite backend requires Node 22.5+ because it uses the built-in `node:sqlite` module
@@ -701,7 +780,7 @@ SponsorRail is not yet a payment processor, ad network, confidential-compute sys
 - provider health probes are point-in-time availability checks
 - Ollama prompt/input tokens are telemetry rather than billed units in v0.7
 - SQLite now persists campaign contracts, campaign pools, grant campaign snapshots, and transactional campaign authorization
-- Stripe dispute holds now quarantine credits before final resolution; payout reconciliation and processor-balance settlement remain future work
+- SponsorRail now supports signed funding-source reconciliation statements and internal conservation audits; live Stripe API statement retrieval, payout reconciliation, and processor-balance settlement remain future work
 - signed funding deposits prove source-side credit issuance but do not yet perform fiat/card/bank settlement themselves
 - campaign pools may contain both operator-seeded and verified deposited credits; per-task lot tracing is not claimed
 - production key rotation, external payment settlement, fraud resistance, and hardware-backed attestation remain future work
