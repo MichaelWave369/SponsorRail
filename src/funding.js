@@ -375,7 +375,14 @@ export class FundingSourceRegistry {
     if (
       !receipt.statementId ||
       !receipt.campaignId ||
-      !receipt.asOf
+      !receipt.asOf ||
+      !Number.isFinite(
+        Date.parse(
+          String(
+            receipt.asOf
+          )
+        )
+      )
     ) {
       return false;
     }
