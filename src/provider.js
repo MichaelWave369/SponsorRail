@@ -3,6 +3,14 @@ import {
   randomUUID
 } from "node:crypto";
 
+import {
+  buildExecutionAuthorization,
+  buildModelContext,
+  createReceiptKeyPair,
+  signReceipt,
+  verifyReceipt
+} from "./sponsorrail.js";
+
 export class ProviderUnavailableError extends Error {
   constructor(
     message,
@@ -31,14 +39,6 @@ export function isSafeProviderRetry(
     error?.safeToRetry === true
   );
 }
-
-import {
-  buildExecutionAuthorization,
-  buildModelContext,
-  createReceiptKeyPair,
-  signReceipt,
-  verifyReceipt
-} from "./sponsorrail.js";
 
 function canonicalize(value) {
   if (Array.isArray(value)) {
