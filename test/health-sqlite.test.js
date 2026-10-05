@@ -539,3 +539,48 @@ test(
     healthB.close();
   }
 );
+
+
+test(
+  "shared health database rejects conflicting circuit policy",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteProviderHealthTracker
+    } =
+      await loadSqliteHealthBackend();
+
+    const database =
+      dbPath();
+
+    const first =
+      new SqliteProviderHealthTracker(
+        database,
+        {
+          failureThreshold: 1,
+          cooldownMs: 1000,
+          halfOpenLeaseMs:
+            500
+        }
+      );
+
+    first.close();
+
+    assert.throws(
+      () =>
+        new SqliteProviderHealthTracker(
+          database,
+          {
+            failureThreshold: 2,
+            cooldownMs: 1000,
+            halfOpenLeaseMs:
+              500
+          }
+        ),
+      /configuration mismatch/
+    );
+  }
+);
