@@ -206,7 +206,7 @@ function routingDecision(
 ) {
   return Object.freeze({
     schema:
-      "sponsorrail.routing.v0.9",
+      "sponsorrail.routing.v0.10",
     selectedProviderId:
       candidate.providerId,
     score:
@@ -848,12 +848,6 @@ export async function executeRoutedSponsoredTask({
 
   const attempts = [];
 
-  const attemptLimit =
-    Math.min(
-      maxAttempts,
-      eligible.length
-    );
-
   let executionAttempts = 0;
 
   for (
@@ -944,6 +938,26 @@ export async function executeRoutedSponsoredTask({
           routingDecision:
             decision
         });
+
+      if (!execution.funded) {
+        router.releaseHalfOpen(
+          candidate.providerId
+        );
+
+        return Object.freeze({
+          ...execution,
+          routing:
+            Object.freeze({
+              decision,
+              candidates:
+                discovery.candidates,
+              attempts:
+                Object.freeze([
+                  ...attempts
+                ])
+            })
+        });
+      }
 
       router.recordSuccess(
         candidate.providerId
