@@ -380,3 +380,42 @@ Mitigation: campaign matching and authorization exclude campaigns with non-zero 
 Threat: a Stripe credit conversion rate changes between payment and later partial refund.
 
 Mitigation boundary: a Stripe funding source ID should represent an immutable conversion policy. Operators must rotate the source ID when changing `creditsPerMinorUnit`. Per-deposit conversion-policy snapshots are future hardening.
+
+
+## Temporary funding-hold threats added in v0.16
+
+### Spending disputed credits
+
+Threat: a dispute is open but the campaign continues spending the contested funding.
+
+Mitigation: available credits are quarantined immediately when a verified hold is placed.
+
+### Reservation revocation
+
+Threat: a dispute steals credits from work that already received authorization.
+
+Mitigation: holds never reduce reserved credits. Uncovered exposure remains provisional until capacity returns.
+
+### Hold/reversal double counting
+
+Threat: the same original deposit is both fully held and independently reversed.
+
+Mitigation: active holds plus permanent reversals cannot exceed the original deposit.
+
+### Fresh-money bypass
+
+Threat: a new deposit becomes spendable while older dispute exposure remains uncovered.
+
+Mitigation: incoming credits pay permanent liability first, then active hold deficits, before entering available balance.
+
+### Endless quarantine
+
+Threat: a stale hold permanently traps credits.
+
+Mitigation boundary: v0.16 requires a signed funding-source resolution. Automatic timeout policy is intentionally not invented because dispute duration is processor-specific.
+
+### Hold-resolution forgery
+
+Threat: an attacker releases or reverses a legitimate hold.
+
+Mitigation: hold resolutions require the same trusted funding-source signature boundary used for deposits, holds, and reversals.

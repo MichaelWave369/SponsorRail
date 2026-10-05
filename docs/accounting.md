@@ -120,3 +120,43 @@ liability  = 0
 ```
 
 `fundingSnapshot()` now reports verified deposits, verified reversals, net verified funding, and outstanding liability separately.
+
+
+## Temporary hold accounting
+
+A hold creates two possible quantities:
+
+```text
+held credits      = amount successfully quarantined from available
+unfunded credits  = provisional exposure that could not be quarantined
+```
+
+Example:
+
+```text
+available = 6
+reserved  = 15
+
+dispute hold = 10
+
+held       = 6
+unfunded   = 4
+available  = 0
+reserved   = 15
+```
+
+The 15-credit reservation remains valid.
+
+Incoming campaign credits are allocated in this order:
+
+```text
+1. permanent reversal liability
+2. active hold deficits
+3. available balance
+```
+
+A won dispute releases the held portion and clears the provisional deficit.
+
+A lost dispute consumes the held portion and turns the provisional deficit into permanent liability.
+
+Campaign pool snapshots include `heldCredits` so quarantined credits remain visible in total-credit accounting.

@@ -17,6 +17,8 @@ import {
 
 import {
   verifyFundingDeposit,
+  verifyFundingHold,
+  verifyFundingHoldResolution,
   verifyFundingReversal
 } from "./funding.js";
 
@@ -472,6 +474,36 @@ CREATE TABLE IF NOT EXISTS campaign_funding_liabilities (
   outstanding_credits INTEGER NOT NULL CHECK (outstanding_credits >= 0)
 );
 
+CREATE TABLE IF NOT EXISTS funding_holds (
+  hold_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  original_deposit_id TEXT NOT NULL REFERENCES funding_deposits(deposit_id) ON DELETE RESTRICT,
+  campaign_id TEXT NOT NULL REFERENCES sponsor_campaigns(campaign_id) ON DELETE RESTRICT,
+  asset TEXT NOT NULL,
+  credits INTEGER NOT NULL CHECK (credits > 0),
+  held_credits INTEGER NOT NULL CHECK (held_credits >= 0),
+  unfunded_credits INTEGER NOT NULL CHECK (unfunded_credits >= 0),
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'released', 'reversed')),
+  external_reference TEXT,
+  placed_at TEXT NOT NULL,
+  place_receipt_hash TEXT NOT NULL UNIQUE,
+  place_receipt_json TEXT NOT NULL,
+  CHECK (held_credits + unfunded_credits = credits)
+);
+
+CREATE TABLE IF NOT EXISTS funding_hold_resolutions (
+  resolution_id TEXT PRIMARY KEY,
+  hold_id TEXT NOT NULL UNIQUE REFERENCES funding_holds(hold_id) ON DELETE RESTRICT,
+  source_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('release', 'reverse')),
+  reason TEXT NOT NULL,
+  external_reference TEXT,
+  occurred_at TEXT NOT NULL,
+  receipt_hash TEXT NOT NULL UNIQUE,
+  receipt_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settlements (
   idempotency_key TEXT PRIMARY KEY,
   grant_id TEXT NOT NULL UNIQUE,
@@ -525,6 +557,20 @@ CREATE INDEX IF NOT EXISTS idx_funding_reversals_deposit
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_reversals_external_reference
   ON funding_reversals(source_id, external_reference)
+  WHERE external_reference IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_funding_holds_campaign
+  ON funding_holds(campaign_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_funding_holds_deposit
+  ON funding_holds(original_deposit_id, status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_holds_external_reference
+  ON funding_holds(source_id, external_reference)
+  WHERE external_reference IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_hold_resolutions_external_reference
+  ON funding_hold_resolutions(source_id, external_reference)
   WHERE external_reference IS NOT NULL;
 
 INSERT OR IGNORE INTO meta(key, value)
@@ -656,6 +702,117 @@ DO UPDATE SET
       );
   }
 
+  #holdDeficitCredits(
+    campaignId
+  ) {
+    const row =
+      this.#db
+        .prepare(`
+SELECT COALESCE(SUM(unfunded_credits), 0) AS credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+`)
+        .get(
+          String(campaignId)
+        );
+
+    return Number(
+      row.credits
+    );
+  }
+
+  #heldCredits(
+    campaignId
+  ) {
+    const row =
+      this.#db
+        .prepare(`
+SELECT COALESCE(SUM(held_credits), 0) AS credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+`)
+        .get(
+          String(campaignId)
+        );
+
+    return Number(
+      row.credits
+    );
+  }
+
+  #coverHoldDeficits(
+    campaignId,
+    credits
+  ) {
+    let remaining =
+      credits;
+
+    let covered = 0;
+
+    const rows =
+      this.#db
+        .prepare(`
+SELECT hold_id, held_credits, unfunded_credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+  AND unfunded_credits > 0
+ORDER BY placed_at, hold_id
+`)
+        .all(
+          String(campaignId)
+        );
+
+    for (
+      const row
+      of rows
+    ) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      const pay =
+        Math.min(
+          remaining,
+          Number(
+            row.unfunded_credits
+          )
+        );
+
+      this.#db
+        .prepare(`
+UPDATE funding_holds
+SET held_credits =
+      held_credits + ?,
+    unfunded_credits =
+      unfunded_credits - ?
+WHERE hold_id = ?
+  AND status = 'active'
+`)
+        .run(
+          pay,
+          pay,
+          String(
+            row.hold_id
+          )
+        );
+
+      remaining -= pay;
+      covered += pay;
+    }
+
+    return Object.freeze({
+      covered,
+      remaining,
+      outstandingHoldCredits:
+        this.#holdDeficitCredits(
+          campaignId
+        )
+    });
+  }
+
   #creditPool(
     poolId,
     credits
@@ -665,43 +822,31 @@ DO UPDATE SET
       "credits"
     );
 
-    if (credits === 0) {
-      return Object.freeze({
-        availableAdded: 0,
-        liabilityPaid: 0,
-        outstandingLiabilityCredits:
-          this.#campaignIdForPool(
-            poolId
-          )
-            ? this.#liabilityCredits(
-                this.#campaignIdForPool(
-                  poolId
-                )
-              )
-            : 0
-      });
-    }
-
     const campaignId =
       this.#campaignIdForPool(
         poolId
       );
 
     if (!campaignId) {
-      this.#db
-        .prepare(
-          "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
-        )
-        .run(
-          credits,
-          String(poolId)
-        );
+      if (credits > 0) {
+        this.#db
+          .prepare(
+            "UPDATE sponsor_pools SET available_credits = available_credits + ? WHERE id = ?"
+          )
+          .run(
+            credits,
+            String(poolId)
+          );
+      }
 
       return Object.freeze({
         availableAdded:
           credits,
         liabilityPaid: 0,
+        holdCoverageAdded: 0,
         outstandingLiabilityCredits:
+          0,
+        outstandingHoldCredits:
           0
       });
     }
@@ -717,15 +862,24 @@ DO UPDATE SET
         liability
       );
 
-    const availableAdded =
-      credits -
-      liabilityPaid;
-
     this.#setLiabilityCredits(
       campaignId,
       liability -
         liabilityPaid
     );
+
+    const afterLiability =
+      credits -
+      liabilityPaid;
+
+    const holdCoverage =
+      this.#coverHoldDeficits(
+        campaignId,
+        afterLiability
+      );
+
+    const availableAdded =
+      holdCoverage.remaining;
 
     if (availableAdded > 0) {
       this.#db
@@ -741,9 +895,14 @@ DO UPDATE SET
     return Object.freeze({
       availableAdded,
       liabilityPaid,
+      holdCoverageAdded:
+        holdCoverage.covered,
       outstandingLiabilityCredits:
         liability -
-        liabilityPaid
+        liabilityPaid,
+      outstandingHoldCredits:
+        holdCoverage
+          .outstandingHoldCredits
     });
   }
 
@@ -1172,9 +1331,16 @@ INSERT INTO sponsor_campaigns (
         row.id
       );
 
+    const heldCredits =
+      campaign
+        ? this.#heldCredits(
+            campaign.campaignId
+          )
+        : 0;
+
     return Object.freeze({
       schema:
-        "sponsorrail.sqlite-pool.v0.12",
+        "sponsorrail.sqlite-pool.v0.16",
       id:
         String(row.id),
       sponsorDisclosure:
@@ -1192,10 +1358,12 @@ INSERT INTO sponsor_campaigns (
       availableCredits,
       reservedCredits,
       spentCredits,
+      heldCredits,
       totalCredits:
         availableCredits +
         reservedCredits +
-        spentCredits
+        spentCredits +
+        heldCredits
     });
   }
 
@@ -1260,6 +1428,13 @@ JOIN sponsor_pools p
 LEFT JOIN campaign_funding_liabilities l
   ON l.campaign_id = c.campaign_id
 WHERE COALESCE(l.outstanding_credits, 0) = 0
+  AND NOT EXISTS (
+    SELECT 1
+    FROM funding_holds h
+    WHERE h.campaign_id = c.campaign_id
+      AND h.status = 'active'
+      AND h.unfunded_credits > 0
+  )
 ORDER BY c.priority DESC, c.campaign_id
 `)
         .all();
@@ -1674,12 +1849,971 @@ INSERT INTO funding_deposits (
           liabilityPaid:
             allocation
               .liabilityPaid,
+          holdCoverageAdded:
+            allocation
+              .holdCoverageAdded,
           outstandingLiabilityCredits:
             allocation
               .outstandingLiabilityCredits,
+          outstandingHoldCredits:
+            allocation
+              .outstandingHoldCredits,
           receiptHash
         });
       }
+    );
+  }
+
+  placeFundingHold(
+    receipt,
+    fundingSourceRegistry
+  ) {
+    if (
+      !verifyFundingHold(
+        receipt,
+        fundingSourceRegistry
+      )
+    ) {
+      throw new Error(
+        "funding hold verification failed"
+      );
+    }
+
+    const receiptJson =
+      canonicalJson(
+        receipt
+      );
+
+    const receiptHash =
+      createHash("sha256")
+        .update(
+          receiptJson
+        )
+        .digest("hex");
+
+    return this.#transaction(
+      () => {
+        const existing =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_holds WHERE hold_id = ?"
+            )
+            .get(
+              String(
+                receipt.holdId
+              )
+            );
+
+        if (existing) {
+          if (
+            String(
+              existing
+                .place_receipt_hash
+            ) !==
+            receiptHash
+          ) {
+            throw new Error(
+              "funding hold idempotency conflict"
+            );
+          }
+
+          return Object.freeze({
+            applied: false,
+            idempotent: true,
+            holdId:
+              String(
+                existing.hold_id
+              ),
+            status:
+              String(
+                existing.status
+              ),
+            credits:
+              Number(
+                existing.credits
+              ),
+            heldCredits:
+              Number(
+                existing.held_credits
+              ),
+            unfundedCredits:
+              Number(
+                existing.unfunded_credits
+              ),
+            outstandingHoldCredits:
+              this.#holdDeficitCredits(
+                existing.campaign_id
+              )
+          });
+        }
+
+        const deposit =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_deposits WHERE deposit_id = ?"
+            )
+            .get(
+              String(
+                receipt
+                  .originalDepositId
+              )
+            );
+
+        if (!deposit) {
+          throw new Error(
+            "unknown original funding deposit"
+          );
+        }
+
+        if (
+          String(
+            deposit.source_id
+          ) !==
+            String(
+              receipt.sourceId
+            ) ||
+          String(
+            deposit.campaign_id
+          ) !==
+            String(
+              receipt.campaignId
+            ) ||
+          String(
+            deposit.asset
+          ) !==
+            String(
+              receipt.asset
+            )
+        ) {
+          throw new Error(
+            "funding hold does not match original deposit"
+          );
+        }
+
+        const reversed =
+          this.#db
+            .prepare(`
+SELECT COALESCE(SUM(credits), 0) AS credits
+FROM funding_reversals
+WHERE original_deposit_id = ?
+`)
+            .get(
+              String(
+                receipt
+                  .originalDepositId
+              )
+            );
+
+        const active =
+          this.#db
+            .prepare(`
+SELECT COALESCE(SUM(credits), 0) AS credits
+FROM funding_holds
+WHERE original_deposit_id = ?
+  AND status = 'active'
+`)
+            .get(
+              String(
+                receipt
+                  .originalDepositId
+              )
+            );
+
+        if (
+          Number(
+            reversed.credits
+          ) +
+            Number(
+              active.credits
+            ) +
+            receipt.credits >
+          Number(
+            deposit.credits
+          )
+        ) {
+          throw new Error(
+            "funding hold exceeds remaining deposit credits"
+          );
+        }
+
+        const duplicateReference =
+          receipt.externalReference ===
+            null
+            ? null
+            : this.#db
+                .prepare(
+                  "SELECT * FROM funding_holds WHERE source_id = ? AND external_reference = ?"
+                )
+                .get(
+                  String(
+                    receipt.sourceId
+                  ),
+                  String(
+                    receipt
+                      .externalReference
+                  )
+                );
+
+        if (duplicateReference) {
+          throw new Error(
+            "funding hold external reference already applied"
+          );
+        }
+
+        const campaignRow =
+          this.#campaignRow(
+            receipt.campaignId
+          );
+
+        if (!campaignRow) {
+          throw new Error(
+            "unknown campaign"
+          );
+        }
+
+        const pool =
+          this.#poolRow(
+            campaignRow.pool_id
+          );
+
+        const heldCredits =
+          Math.min(
+            Number(
+              pool.available_credits
+            ),
+            receipt.credits
+          );
+
+        const unfundedCredits =
+          receipt.credits -
+          heldCredits;
+
+        if (heldCredits > 0) {
+          this.#db
+            .prepare(
+              "UPDATE sponsor_pools SET available_credits = available_credits - ? WHERE id = ?"
+            )
+            .run(
+              heldCredits,
+              campaignRow.pool_id
+            );
+        }
+
+        this.#db
+          .prepare(`
+INSERT INTO funding_holds (
+  hold_id,
+  source_id,
+  original_deposit_id,
+  campaign_id,
+  asset,
+  credits,
+  held_credits,
+  unfunded_credits,
+  reason,
+  status,
+  external_reference,
+  placed_at,
+  place_receipt_hash,
+  place_receipt_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+`)
+          .run(
+            String(
+              receipt.holdId
+            ),
+            String(
+              receipt.sourceId
+            ),
+            String(
+              receipt
+                .originalDepositId
+            ),
+            String(
+              receipt.campaignId
+            ),
+            String(
+              receipt.asset
+            ),
+            receipt.credits,
+            heldCredits,
+            unfundedCredits,
+            String(
+              receipt.reason
+            ),
+            receipt.externalReference ===
+              null
+              ? null
+              : String(
+                  receipt
+                    .externalReference
+                ),
+            String(
+              receipt.occurredAt
+            ),
+            receiptHash,
+            receiptJson
+          );
+
+        return Object.freeze({
+          applied: true,
+          idempotent: false,
+          holdId:
+            String(
+              receipt.holdId
+            ),
+          status: "active",
+          credits:
+            receipt.credits,
+          heldCredits,
+          unfundedCredits,
+          outstandingHoldCredits:
+            this.#holdDeficitCredits(
+              receipt.campaignId
+            ),
+          receiptHash
+        });
+      }
+    );
+  }
+
+  findFundingHoldByExternalReference(
+    sourceId,
+    externalReference
+  ) {
+    const row =
+      this.#db
+        .prepare(
+          "SELECT * FROM funding_holds WHERE source_id = ? AND external_reference = ?"
+        )
+        .get(
+          String(sourceId),
+          String(
+            externalReference
+          )
+        );
+
+    if (!row) {
+      return null;
+    }
+
+    return Object.freeze({
+      holdId:
+        String(
+          row.hold_id
+        ),
+      sourceId:
+        String(
+          row.source_id
+        ),
+      originalDepositId:
+        String(
+          row.original_deposit_id
+        ),
+      campaignId:
+        String(
+          row.campaign_id
+        ),
+      asset:
+        String(
+          row.asset
+        ),
+      credits:
+        Number(
+          row.credits
+        ),
+      heldCredits:
+        Number(
+          row.held_credits
+        ),
+      unfundedCredits:
+        Number(
+          row.unfunded_credits
+        ),
+      reason:
+        String(
+          row.reason
+        ),
+      status:
+        String(
+          row.status
+        ),
+      externalReference:
+        row.external_reference ??
+        null,
+      placedAt:
+        String(
+          row.placed_at
+        ),
+      receiptHash:
+        String(
+          row.place_receipt_hash
+        ),
+      receipt:
+        JSON.parse(
+          row.place_receipt_json
+        )
+    });
+  }
+
+  resolveFundingHold(
+    receipt,
+    fundingSourceRegistry
+  ) {
+    if (
+      !verifyFundingHoldResolution(
+        receipt,
+        fundingSourceRegistry
+      )
+    ) {
+      throw new Error(
+        "funding hold resolution verification failed"
+      );
+    }
+
+    const receiptJson =
+      canonicalJson(
+        receipt
+      );
+
+    const receiptHash =
+      createHash("sha256")
+        .update(
+          receiptJson
+        )
+        .digest("hex");
+
+    return this.#transaction(
+      () => {
+        const existingResolution =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_hold_resolutions WHERE resolution_id = ?"
+            )
+            .get(
+              String(
+                receipt
+                  .resolutionId
+              )
+            );
+
+        if (existingResolution) {
+          if (
+            String(
+              existingResolution
+                .receipt_hash
+            ) !==
+            receiptHash
+          ) {
+            throw new Error(
+              "funding hold resolution idempotency conflict"
+            );
+          }
+
+          const hold =
+            this.#db
+              .prepare(
+                "SELECT * FROM funding_holds WHERE hold_id = ?"
+              )
+              .get(
+                String(
+                  existingResolution
+                    .hold_id
+                )
+              );
+
+          return Object.freeze({
+            applied: false,
+            idempotent: true,
+            resolutionId:
+              String(
+                existingResolution
+                  .resolution_id
+              ),
+            holdId:
+              String(
+                existingResolution
+                  .hold_id
+              ),
+            outcome:
+              String(
+                existingResolution
+                  .outcome
+              ),
+            status:
+              String(
+                hold.status
+              ),
+            outstandingLiabilityCredits:
+              this.#liabilityCredits(
+                hold.campaign_id
+              ),
+            outstandingHoldCredits:
+              this.#holdDeficitCredits(
+                hold.campaign_id
+              )
+          });
+        }
+
+        const hold =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_holds WHERE hold_id = ?"
+            )
+            .get(
+              String(
+                receipt.holdId
+              )
+            );
+
+        if (!hold) {
+          throw new Error(
+            "unknown funding hold"
+          );
+        }
+
+        if (
+          hold.status !==
+            "active"
+        ) {
+          throw new Error(
+            "funding hold is already resolved"
+          );
+        }
+
+        if (
+          String(
+            hold.source_id
+          ) !==
+            String(
+              receipt.sourceId
+            ) ||
+          String(
+            hold
+              .original_deposit_id
+          ) !==
+            String(
+              receipt
+                .originalDepositId
+            ) ||
+          String(
+            hold.campaign_id
+          ) !==
+            String(
+              receipt.campaignId
+            ) ||
+          String(
+            hold.asset
+          ) !==
+            String(
+              receipt.asset
+            )
+        ) {
+          throw new Error(
+            "funding hold resolution does not match hold"
+          );
+        }
+
+        const byHold =
+          this.#db
+            .prepare(
+              "SELECT * FROM funding_hold_resolutions WHERE hold_id = ?"
+            )
+            .get(
+              String(
+                receipt.holdId
+              )
+            );
+
+        if (byHold) {
+          throw new Error(
+            "funding hold already has a resolution"
+          );
+        }
+
+        const duplicateReference =
+          receipt.externalReference ===
+            null
+            ? null
+            : this.#db
+                .prepare(
+                  "SELECT * FROM funding_hold_resolutions WHERE source_id = ? AND external_reference = ?"
+                )
+                .get(
+                  String(
+                    receipt.sourceId
+                  ),
+                  String(
+                    receipt
+                      .externalReference
+                  )
+                );
+
+        if (duplicateReference) {
+          throw new Error(
+            "funding hold resolution external reference already applied"
+          );
+        }
+
+        this.#db
+          .prepare(`
+INSERT INTO funding_hold_resolutions (
+  resolution_id,
+  hold_id,
+  source_id,
+  outcome,
+  reason,
+  external_reference,
+  occurred_at,
+  receipt_hash,
+  receipt_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+          .run(
+            String(
+              receipt
+                .resolutionId
+            ),
+            String(
+              receipt.holdId
+            ),
+            String(
+              receipt.sourceId
+            ),
+            String(
+              receipt.outcome
+            ),
+            String(
+              receipt.reason
+            ),
+            receipt.externalReference ===
+              null
+              ? null
+              : String(
+                  receipt
+                    .externalReference
+                ),
+            String(
+              receipt.occurredAt
+            ),
+            receiptHash,
+            receiptJson
+          );
+
+        if (
+          receipt.outcome ===
+            "release"
+        ) {
+          this.#db
+            .prepare(
+              "UPDATE funding_holds SET status = 'released' WHERE hold_id = ?"
+            )
+            .run(
+              String(
+                receipt.holdId
+              )
+            );
+
+          const campaignRow =
+            this.#campaignRow(
+              hold.campaign_id
+            );
+
+          const allocation =
+            this.#creditPool(
+              campaignRow.pool_id,
+              Number(
+                hold.held_credits
+              )
+            );
+
+          return Object.freeze({
+            applied: true,
+            idempotent: false,
+            resolutionId:
+              String(
+                receipt
+                  .resolutionId
+              ),
+            holdId:
+              String(
+                receipt.holdId
+              ),
+            outcome: "release",
+            releasedHeldCredits:
+              Number(
+                hold.held_credits
+              ),
+            clearedUnfundedCredits:
+              Number(
+                hold
+                  .unfunded_credits
+              ),
+            availableAdded:
+              allocation
+                .availableAdded,
+            liabilityPaid:
+              allocation
+                .liabilityPaid,
+            holdCoverageAdded:
+              allocation
+                .holdCoverageAdded,
+            outstandingLiabilityCredits:
+              allocation
+                .outstandingLiabilityCredits,
+            outstandingHoldCredits:
+              allocation
+                .outstandingHoldCredits,
+            receiptHash
+          });
+        }
+
+        const reversalId =
+          `hold-resolution:${receipt.resolutionId}`;
+
+        const reversalReference =
+          receipt.externalReference ===
+            null
+            ? null
+            : String(
+                receipt
+                  .externalReference
+              );
+
+        if (
+          reversalReference !==
+            null
+        ) {
+          const existingReversalReference =
+            this.#db
+              .prepare(
+                "SELECT reversal_id FROM funding_reversals WHERE source_id = ? AND external_reference = ?"
+              )
+              .get(
+                String(
+                  receipt.sourceId
+                ),
+                reversalReference
+              );
+
+          if (
+            existingReversalReference
+          ) {
+            throw new Error(
+              "funding reversal external reference already applied"
+            );
+          }
+        }
+
+        this.#db
+          .prepare(
+            "UPDATE funding_holds SET status = 'reversed' WHERE hold_id = ?"
+          )
+          .run(
+            String(
+              receipt.holdId
+            )
+          );
+
+        const outstanding =
+          this.#liabilityCredits(
+            hold.campaign_id
+          ) +
+          Number(
+            hold.unfunded_credits
+          );
+
+        this.#setLiabilityCredits(
+          hold.campaign_id,
+          outstanding
+        );
+
+        this.#db
+          .prepare(`
+INSERT INTO funding_reversals (
+  reversal_id,
+  source_id,
+  original_deposit_id,
+  campaign_id,
+  asset,
+  credits,
+  reason,
+  external_reference,
+  occurred_at,
+  receipt_hash,
+  receipt_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+          .run(
+            reversalId,
+            String(
+              receipt.sourceId
+            ),
+            String(
+              hold
+                .original_deposit_id
+            ),
+            String(
+              hold.campaign_id
+            ),
+            String(
+              hold.asset
+            ),
+            Number(
+              hold.credits
+            ),
+            "dispute_loss",
+            reversalReference,
+            String(
+              receipt.occurredAt
+            ),
+            receiptHash,
+            receiptJson
+          );
+
+        return Object.freeze({
+          applied: true,
+          idempotent: false,
+          resolutionId:
+            String(
+              receipt
+                .resolutionId
+            ),
+          holdId:
+            String(
+              receipt.holdId
+            ),
+          outcome: "reverse",
+          reversalId,
+          credits:
+            Number(
+              hold.credits
+            ),
+          consumedHeldCredits:
+            Number(
+              hold.held_credits
+            ),
+          liabilityAdded:
+            Number(
+              hold.unfunded_credits
+            ),
+          outstandingLiabilityCredits:
+            outstanding,
+          outstandingHoldCredits:
+            this.#holdDeficitCredits(
+              hold.campaign_id
+            ),
+          receiptHash
+        });
+      }
+    );
+  }
+
+  listFundingHolds({
+    campaignId = null,
+    sourceId = null,
+    status = null
+  } = {}) {
+    const clauses = [];
+    const params = [];
+
+    if (campaignId !== null) {
+      clauses.push(
+        "campaign_id = ?"
+      );
+      params.push(
+        String(campaignId)
+      );
+    }
+
+    if (sourceId !== null) {
+      clauses.push(
+        "source_id = ?"
+      );
+      params.push(
+        String(sourceId)
+      );
+    }
+
+    if (status !== null) {
+      clauses.push(
+        "status = ?"
+      );
+      params.push(
+        String(status)
+      );
+    }
+
+    const where =
+      clauses.length > 0
+        ? ` WHERE ${clauses.join(" AND ")}`
+        : "";
+
+    return Object.freeze(
+      this.#db
+        .prepare(
+          `SELECT * FROM funding_holds${where} ORDER BY placed_at, hold_id`
+        )
+        .all(...params)
+        .map(
+          (row) =>
+            Object.freeze({
+              holdId:
+                String(
+                  row.hold_id
+                ),
+              sourceId:
+                String(
+                  row.source_id
+                ),
+              originalDepositId:
+                String(
+                  row
+                    .original_deposit_id
+                ),
+              campaignId:
+                String(
+                  row.campaign_id
+                ),
+              asset:
+                String(
+                  row.asset
+                ),
+              credits:
+                Number(
+                  row.credits
+                ),
+              heldCredits:
+                Number(
+                  row.held_credits
+                ),
+              unfundedCredits:
+                Number(
+                  row
+                    .unfunded_credits
+                ),
+              reason:
+                String(
+                  row.reason
+                ),
+              status:
+                String(
+                  row.status
+                ),
+              externalReference:
+                row.external_reference ??
+                null,
+              placedAt:
+                String(
+                  row.placed_at
+                ),
+              receiptHash:
+                String(
+                  row
+                    .place_receipt_hash
+                )
+            })
+        )
     );
   }
 
@@ -1884,15 +3018,35 @@ WHERE original_deposit_id = ?
             prior.reversed
           );
 
+        const activeHolds =
+          this.#db
+            .prepare(`
+SELECT COALESCE(SUM(credits), 0) AS held
+FROM funding_holds
+WHERE original_deposit_id = ?
+  AND status = 'active'
+`)
+            .get(
+              String(
+                receipt.originalDepositId
+              )
+            );
+
+        const activeHeldCredits =
+          Number(
+            activeHolds.held
+          );
+
         if (
           priorReversed +
+            activeHeldCredits +
             receipt.credits >
           Number(
             deposit.credits
           )
         ) {
           throw new Error(
-            "funding reversal exceeds remaining deposit credits"
+            "funding reversal exceeds unheld deposit credits"
           );
         }
 
@@ -2282,9 +3436,26 @@ WHERE campaign_id = ?
         campaignId
       );
 
+    const holds =
+      this.#db
+        .prepare(`
+SELECT
+  COUNT(*) AS active_hold_count,
+  COALESCE(SUM(held_credits), 0) AS held_credits,
+  COALESCE(SUM(unfunded_credits), 0) AS unfunded_credits
+FROM funding_holds
+WHERE campaign_id = ?
+  AND status = 'active'
+`)
+        .get(
+          String(
+            campaignId
+          )
+        );
+
     return Object.freeze({
       schema:
-        "sponsorrail.funding-snapshot.v0.15",
+        "sponsorrail.funding-snapshot.v0.16",
       campaignId:
         String(
           campaignId
@@ -2316,6 +3487,18 @@ WHERE campaign_id = ?
         ),
       outstandingLiabilityCredits:
         liability,
+      activeHoldCount:
+        Number(
+          holds.active_hold_count
+        ),
+      activeHeldCredits:
+        Number(
+          holds.held_credits
+        ),
+      outstandingHoldCredits:
+        Number(
+          holds.unfunded_credits
+        ),
       currentAvailableCredits:
         campaign.pool
           .availableCredits,
@@ -2402,6 +3585,13 @@ JOIN sponsor_campaigns c
 LEFT JOIN campaign_funding_liabilities l
   ON l.campaign_id = c.campaign_id
 WHERE COALESCE(l.outstanding_credits, 0) = 0
+  AND NOT EXISTS (
+    SELECT 1
+    FROM funding_holds h
+    WHERE h.campaign_id = c.campaign_id
+      AND h.status = 'active'
+      AND h.unfunded_credits > 0
+  )
 ORDER BY c.priority DESC, c.campaign_id
 `)
             .all();

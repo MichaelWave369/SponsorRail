@@ -6,6 +6,8 @@ import {
   SignedFundingSource,
   createFundingSourceKeyPair,
   verifyFundingDeposit,
+  verifyFundingHold,
+  verifyFundingHoldResolution,
   verifyFundingReversal
 } from "../src/index.js";
 
@@ -284,6 +286,163 @@ test(
         "originalDepositId",
         "reason",
         "reversalId",
+        "schema",
+        "signature",
+        "sourceId"
+      ]
+    );
+  }
+);
+
+
+test(
+  "funding source issues signed temporary hold receipt",
+  () => {
+    const {
+      fundingSource,
+      registry
+    } = source();
+
+    const hold =
+      fundingSource
+        .issueHold({
+          originalDepositId:
+            "deposit-1",
+          campaignId:
+            "campaign-1",
+          credits: 9,
+          reason: "dispute",
+          holdId: "hold-1",
+          externalReference:
+            "dispute-1"
+        });
+
+    assert.equal(
+      hold.schema,
+      "sponsorrail.funding-hold.v0.16"
+    );
+
+    assert.equal(
+      verifyFundingHold(
+        hold,
+        registry
+      ),
+      true
+    );
+  }
+);
+
+test(
+  "funding source issues signed hold release and reversal resolutions",
+  () => {
+    const {
+      fundingSource,
+      registry
+    } = source();
+
+    const release =
+      fundingSource
+        .issueHoldResolution({
+          holdId: "hold-1",
+          originalDepositId:
+            "deposit-1",
+          campaignId:
+            "campaign-1",
+          outcome: "release",
+          reason:
+            "dispute_won",
+          resolutionId:
+            "resolution-won"
+        });
+
+    const reverse =
+      fundingSource
+        .issueHoldResolution({
+          holdId: "hold-2",
+          originalDepositId:
+            "deposit-1",
+          campaignId:
+            "campaign-1",
+          outcome: "reverse",
+          reason:
+            "dispute_loss",
+          resolutionId:
+            "resolution-lost"
+        });
+
+    assert.equal(
+      verifyFundingHoldResolution(
+        release,
+        registry
+      ),
+      true
+    );
+
+    assert.equal(
+      verifyFundingHoldResolution(
+        reverse,
+        registry
+      ),
+      true
+    );
+  }
+);
+
+test(
+  "hold resolution outcome and reason must agree",
+  () => {
+    const {
+      fundingSource
+    } = source();
+
+    assert.throws(
+      () =>
+        fundingSource
+          .issueHoldResolution({
+            holdId: "hold-1",
+            originalDepositId:
+              "deposit-1",
+            campaignId:
+              "campaign-1",
+            outcome: "release",
+            reason:
+              "dispute_loss"
+          }),
+      /reason does not match outcome/
+    );
+  }
+);
+
+test(
+  "hold receipts contain no cognition or identity payloads",
+  () => {
+    const {
+      fundingSource
+    } = source();
+
+    const hold =
+      fundingSource
+        .issueHold({
+          originalDepositId:
+            "deposit-1",
+          campaignId:
+            "campaign-1",
+          credits: 4,
+          reason: "dispute"
+        });
+
+    assert.deepEqual(
+      Object.keys(hold)
+        .sort(),
+      [
+        "asset",
+        "campaignId",
+        "credits",
+        "externalReference",
+        "holdId",
+        "occurredAt",
+        "originalDepositId",
+        "reason",
         "schema",
         "signature",
         "sourceId"

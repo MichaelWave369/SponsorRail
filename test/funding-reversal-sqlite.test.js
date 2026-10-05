@@ -400,7 +400,7 @@ test(
               }),
             registry
           ),
-      /exceeds remaining deposit credits/
+      /exceeds (?:remaining|unheld) deposit credits/
     );
 
     broker.close();

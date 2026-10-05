@@ -19,6 +19,12 @@ const REFUND_EVENTS =
     "refund.updated"
   ]);
 
+const DISPUTE_HOLD_EVENTS =
+  new Set([
+    "charge.dispute.created",
+    "charge.dispute.updated"
+  ]);
+
 function normalizeRawBody(
   rawBody
 ) {
@@ -704,6 +710,183 @@ export class StripeCheckoutFundingAdapter {
     });
   }
 
+  handleDisputeHoldWebhook({
+    rawBody,
+    signatureHeader,
+    broker,
+    fundingSourceRegistry
+  }) {
+    if (
+      !broker ||
+      typeof broker
+        .placeFundingHold !==
+        "function" ||
+      typeof broker
+        .findFundingDepositByExternalReference !==
+        "function"
+    ) {
+      throw new TypeError(
+        "broker with funding hold APIs is required"
+      );
+    }
+
+    const event =
+      this.#parseVerifiedEvent({
+        rawBody,
+        signatureHeader
+      });
+
+    if (
+      !DISPUTE_HOLD_EVENTS.has(
+        event.type
+      )
+    ) {
+      return Object.freeze({
+        accepted: false,
+        ignored: true,
+        reason:
+          "UNSUPPORTED_HOLD_EVENT",
+        stripeEventId:
+          String(
+            event.id ??
+            "unknown"
+          )
+      });
+    }
+
+    const dispute =
+      event.data?.object;
+
+    if (
+      !dispute ||
+      dispute.object !==
+        "dispute" ||
+      !dispute.id
+    ) {
+      throw new Error(
+        "Stripe dispute event does not contain a Dispute"
+      );
+    }
+
+    if (
+      [
+        "won",
+        "lost"
+      ].includes(
+        dispute.status
+      )
+    ) {
+      return Object.freeze({
+        accepted: false,
+        ignored: true,
+        reason:
+          "DISPUTE_FINAL_AWAIT_CLOSED",
+        stripeEventId:
+          String(event.id),
+        disputeStatus:
+          String(
+            dispute.status
+          )
+      });
+    }
+
+    if (
+      typeof dispute.payment_intent !==
+        "string" ||
+      !dispute.payment_intent
+    ) {
+      throw new Error(
+        "Stripe Dispute payment_intent is required"
+      );
+    }
+
+    if (
+      !Number.isInteger(
+        dispute.created
+      ) ||
+      dispute.created <= 0
+    ) {
+      throw new Error(
+        "Stripe Dispute created timestamp is required"
+      );
+    }
+
+    const {
+      currency,
+      credits
+    } =
+      this.#creditsFor(
+        dispute.amount,
+        dispute.currency
+      );
+
+    const originalDeposit =
+      broker
+        .findFundingDepositByExternalReference(
+          this.source.sourceId,
+          `stripe-payment-intent:${dispute.payment_intent}`
+        );
+
+    if (!originalDeposit) {
+      throw new Error(
+        "no matching SponsorRail Stripe deposit"
+      );
+    }
+
+    const holdReceipt =
+      this.source
+        .issueHold({
+          originalDepositId:
+            originalDeposit.depositId,
+          campaignId:
+            originalDeposit.campaignId,
+          credits,
+          reason: "dispute",
+          holdId:
+            `stripe-dispute:${dispute.id}`,
+          externalReference:
+            `stripe-dispute:${dispute.id}`,
+          occurredAt:
+            dispute.created * 1000
+        });
+
+    const hold =
+      broker.placeFundingHold(
+        holdReceipt,
+        fundingSourceRegistry
+      );
+
+    return Object.freeze({
+      accepted: true,
+      kind: "hold",
+      stripe: Object.freeze({
+        eventId:
+          String(event.id),
+        eventType:
+          String(event.type),
+        disputeId:
+          String(dispute.id),
+        disputeStatus:
+          String(
+            dispute.status ??
+            "unknown"
+          ),
+        paymentIntentId:
+          String(
+            dispute.payment_intent
+          ),
+        livemode:
+          event.livemode === true,
+        currency,
+        amountMinor:
+          dispute.amount
+      }),
+      credits,
+      holdReceipt,
+      hold
+    });
+  }
+
   handleReversalWebhook({
     rawBody,
     signatureHeader,
@@ -810,6 +993,127 @@ export class StripeCheckoutFundingAdapter {
       }
 
       if (
+        typeof object.payment_intent !==
+          "string" ||
+        !object.payment_intent
+      ) {
+        throw new Error(
+          "Stripe Dispute payment_intent is required"
+        );
+      }
+
+      if (
+        !Number.isInteger(
+          object.created
+        ) ||
+        object.created <= 0
+      ) {
+        throw new Error(
+          "Stripe Dispute created timestamp is required"
+        );
+      }
+
+      if (
+        [
+          "won",
+          "lost"
+        ].includes(
+          object.status
+        )
+      ) {
+        const hold =
+          typeof broker
+            .findFundingHoldByExternalReference ===
+              "function"
+            ? broker
+                .findFundingHoldByExternalReference(
+                  this.source.sourceId,
+                  `stripe-dispute:${object.id}`
+                )
+            : null;
+
+        if (hold) {
+          const outcome =
+            object.status ===
+              "won"
+              ? "release"
+              : "reverse";
+
+          const resolutionReceipt =
+            this.source
+              .issueHoldResolution({
+                holdId:
+                  hold.holdId,
+                originalDepositId:
+                  hold.originalDepositId,
+                campaignId:
+                  hold.campaignId,
+                outcome,
+                reason:
+                  outcome ===
+                    "release"
+                    ? "dispute_won"
+                    : "dispute_loss",
+                resolutionId:
+                  `stripe-dispute-resolution:${object.id}`,
+                externalReference:
+                  `stripe-dispute-resolution:${object.id}`,
+                occurredAt:
+                  (
+                    Number.isInteger(
+                      event.created
+                    ) &&
+                    event.created > 0
+                      ? event.created
+                      : object.created
+                  ) * 1000
+              });
+
+          const resolution =
+            broker
+              .resolveFundingHold(
+                resolutionReceipt,
+                fundingSourceRegistry
+              );
+
+          return Object.freeze({
+            accepted: true,
+            kind:
+              outcome === "release"
+                ? "hold_release"
+                : "hold_reversal",
+            stripe: Object.freeze({
+              eventId:
+                String(event.id),
+              eventType:
+                String(event.type),
+              disputeId:
+                String(object.id),
+              disputeStatus:
+                String(
+                  object.status
+                ),
+              paymentIntentId:
+                String(
+                  object.payment_intent
+                ),
+              livemode:
+                event.livemode ===
+                  true,
+              currency:
+                String(
+                  object.currency
+                ).toLowerCase(),
+              amountMinor:
+                object.amount
+            }),
+            resolutionReceipt,
+            resolution
+          });
+        }
+      }
+
+      if (
         object.status !==
           "lost"
       ) {
@@ -828,16 +1132,6 @@ export class StripeCheckoutFundingAdapter {
         });
       }
 
-      if (
-        typeof object.payment_intent !==
-          "string" ||
-        !object.payment_intent
-      ) {
-        throw new Error(
-          "Stripe Dispute payment_intent is required"
-        );
-      }
-
       reason =
         "dispute_loss";
       reversalId =
@@ -851,7 +1145,14 @@ export class StripeCheckoutFundingAdapter {
       currency =
         object.currency;
       occurredAt =
-        object.created;
+        (
+          Number.isInteger(
+            event.created
+          ) &&
+          event.created > 0
+            ? event.created
+            : object.created
+        );
     } else {
       return Object.freeze({
         accepted: false,

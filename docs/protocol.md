@@ -569,3 +569,63 @@ Exact replay of the same signed reversal is idempotent.
 A campaign with outstanding funding liability is ineligible for new campaign authorization.
 
 Credits returned from grant release or unused settlement, as well as new deposits, must pay liability before becoming available for new work.
+
+
+## Temporary funding hold protocol v0.16
+
+Hold receipt:
+
+```json
+{
+  "schema": "sponsorrail.funding-hold.v0.16",
+  "holdId": "hold-uuid",
+  "sourceId": "source.example",
+  "originalDepositId": "deposit-uuid",
+  "campaignId": "campaign-1",
+  "asset": "compute-credits",
+  "credits": 500,
+  "reason": "dispute",
+  "externalReference": "processor-dispute-id",
+  "occurredAt": "2026-10-05T05:00:00.000Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "value": "base64"
+  }
+}
+```
+
+Resolution receipt:
+
+```json
+{
+  "schema": "sponsorrail.funding-hold-resolution.v0.16",
+  "resolutionId": "resolution-uuid",
+  "sourceId": "source.example",
+  "holdId": "hold-uuid",
+  "originalDepositId": "deposit-uuid",
+  "campaignId": "campaign-1",
+  "asset": "compute-credits",
+  "outcome": "release",
+  "reason": "dispute_won",
+  "externalReference": "processor-resolution-id",
+  "occurredAt": "2026-10-20T05:00:00.000Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "value": "base64"
+  }
+}
+```
+
+Hold placement and resolution are idempotent.
+
+### Exposure ceiling
+
+For one original deposit:
+
+```text
+permanent reversals
++ active holds
+<= original deposit credits
+```
+
+This prevents a provisional hold and a permanent reversal from independently claiming the same funding twice.
