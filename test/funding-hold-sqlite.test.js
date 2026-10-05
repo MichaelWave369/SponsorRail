@@ -282,7 +282,14 @@ test(
       fundingSource,
       registry
     } =
-      await setup(5);
+      await setup(10);
+
+    broker.authorizeCampaign(
+      task({
+        id: "reserved-before-hold",
+        computeRequested: 5
+      })
+    );
 
     broker.placeFundingHold(
       fundingSource.issueHold({
@@ -470,7 +477,14 @@ test(
       fundingSource,
       registry
     } =
-      await setup(5);
+      await setup(10);
+
+    broker.authorizeCampaign(
+      task({
+        id: "reserved-before-win",
+        computeRequested: 5
+      })
+    );
 
     broker.placeFundingHold(
       fundingSource.issueHold({
@@ -551,7 +565,14 @@ test(
       fundingSource,
       registry
     } =
-      await setup(5);
+      await setup(10);
+
+    broker.authorizeCampaign(
+      task({
+        id: "reserved-before-loss",
+        computeRequested: 5
+      })
+    );
 
     broker.placeFundingHold(
       fundingSource.issueHold({
