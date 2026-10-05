@@ -63,7 +63,8 @@ export {
   verifyFundingDeposit,
   verifyFundingHold,
   verifyFundingHoldResolution,
-  verifyFundingReversal
+  verifyFundingReversal,
+  verifyFundingStatement
 } from "./funding.js";
 
 export {

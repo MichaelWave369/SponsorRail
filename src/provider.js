@@ -516,7 +516,7 @@ export async function executeSponsoredProviderTask({
 
   const receiptPayload = {
     schema:
-      "sponsorrail.receipt.v0.16",
+      "sponsorrail.receipt.v0.17",
     runId:
       randomUUID(),
     taskId:

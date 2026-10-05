@@ -8,7 +8,8 @@ import {
   verifyFundingDeposit,
   verifyFundingHold,
   verifyFundingHoldResolution,
-  verifyFundingReversal
+  verifyFundingReversal,
+  verifyFundingStatement
 } from "../src/index.js";
 
 function source() {
@@ -446,6 +447,143 @@ test(
         "schema",
         "signature",
         "sourceId"
+      ]
+    );
+  }
+);
+
+
+test(
+  "funding source issues signed reconciliation statement",
+  () => {
+    const {
+      fundingSource,
+      registry
+    } = source();
+
+    const statement =
+      fundingSource
+        .issueStatement({
+          campaignId:
+            "campaign-1",
+          depositedCredits: 25,
+          reversedCredits: 7,
+          activeHoldCredits: 4,
+          statementId:
+            "statement-1",
+          asOf:
+            "2026-10-05T06:00:00.000Z"
+        });
+
+    assert.equal(
+      statement.schema,
+      "sponsorrail.funding-statement.v0.17"
+    );
+
+    assert.equal(
+      verifyFundingStatement(
+        statement,
+        registry
+      ),
+      true
+    );
+  }
+);
+
+test(
+  "funding statement rejects impossible totals and tampering",
+  () => {
+    const {
+      fundingSource,
+      registry
+    } = source();
+
+    assert.throws(
+      () =>
+        fundingSource
+          .issueStatement({
+            campaignId:
+              "campaign-1",
+            depositedCredits: 10,
+            reversedCredits: 11,
+            activeHoldCredits: 0
+          }),
+      /reversedCredits cannot exceed/
+    );
+
+    assert.throws(
+      () =>
+        fundingSource
+          .issueStatement({
+            campaignId:
+              "campaign-1",
+            depositedCredits: 10,
+            reversedCredits: 4,
+            activeHoldCredits: 7
+          }),
+      /activeHoldCredits exceeds/
+    );
+
+    const statement =
+      fundingSource
+        .issueStatement({
+          campaignId:
+            "campaign-1",
+          depositedCredits: 10,
+          reversedCredits: 4,
+          activeHoldCredits: 2,
+          statementId:
+            "statement-tamper",
+          asOf:
+            "2026-10-05T06:00:00.000Z"
+        });
+
+    assert.equal(
+      verifyFundingStatement(
+        {
+          ...statement,
+          depositedCredits: 100
+        },
+        registry
+      ),
+      false
+    );
+  }
+);
+
+test(
+  "funding statement schema contains no cognition payloads",
+  () => {
+    const {
+      fundingSource
+    } = source();
+
+    const statement =
+      fundingSource
+        .issueStatement({
+          campaignId:
+            "campaign-1",
+          depositedCredits: 10,
+          reversedCredits: 2,
+          activeHoldCredits: 3,
+          asOf:
+            "2026-10-05T06:00:00.000Z"
+        });
+
+    assert.deepEqual(
+      Object.keys(statement)
+        .sort(),
+      [
+        "activeHoldCredits",
+        "asOf",
+        "asset",
+        "campaignId",
+        "depositedCredits",
+        "reversedCredits",
+        "schema",
+        "signature",
+        "sourceId",
+        "statementId"
       ]
     );
   }

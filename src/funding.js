@@ -363,6 +363,63 @@ export class FundingSourceRegistry {
         receipt
       );
   }
+
+  verifyStatement(receipt) {
+    if (
+      receipt?.schema !==
+      "sponsorrail.funding-statement.v0.17"
+    ) {
+      return false;
+    }
+
+    if (
+      !receipt.statementId ||
+      !receipt.campaignId ||
+      !receipt.asOf ||
+      !Number.isFinite(
+        Date.parse(
+          String(
+            receipt.asOf
+          )
+        )
+      )
+    ) {
+      return false;
+    }
+
+    for (
+      const value
+      of [
+        receipt.depositedCredits,
+        receipt.reversedCredits,
+        receipt.activeHoldCredits
+      ]
+    ) {
+      if (
+        !Number.isInteger(value) ||
+        value < 0
+      ) {
+        return false;
+      }
+    }
+
+    if (
+      receipt.reversedCredits >
+        receipt.depositedCredits ||
+      receipt.activeHoldCredits >
+        (
+          receipt.depositedCredits -
+          receipt.reversedCredits
+        )
+    ) {
+      return false;
+    }
+
+    return this
+      .#verifySourceAndSignature(
+        receipt
+      );
+  }
 }
 
 export class SignedFundingSource {
@@ -709,6 +766,97 @@ export class SignedFundingSource {
       this.privateKey
     );
   }
+
+  issueStatement({
+    campaignId,
+    depositedCredits,
+    reversedCredits,
+    activeHoldCredits,
+    statementId =
+      randomUUID(),
+    asOf =
+      null
+  }) {
+    if (!campaignId) {
+      throw new TypeError(
+        "campaignId is required"
+      );
+    }
+
+    for (
+      const [name, value]
+      of [
+        [
+          "depositedCredits",
+          depositedCredits
+        ],
+        [
+          "reversedCredits",
+          reversedCredits
+        ],
+        [
+          "activeHoldCredits",
+          activeHoldCredits
+        ]
+      ]
+    ) {
+      if (
+        !Number.isInteger(value) ||
+        value < 0
+      ) {
+        throw new TypeError(
+          `${name} must be a non-negative integer`
+        );
+      }
+    }
+
+    if (
+      reversedCredits >
+        depositedCredits
+    ) {
+      throw new TypeError(
+        "reversedCredits cannot exceed depositedCredits"
+      );
+    }
+
+    if (
+      activeHoldCredits >
+        (
+          depositedCredits -
+          reversedCredits
+        )
+    ) {
+      throw new TypeError(
+        "activeHoldCredits exceeds remaining funded credits"
+      );
+    }
+
+    const payload = {
+      schema:
+        "sponsorrail.funding-statement.v0.17",
+      statementId:
+        String(statementId),
+      sourceId:
+        this.sourceId,
+      campaignId:
+        String(campaignId),
+      asset:
+        this.asset,
+      depositedCredits,
+      reversedCredits,
+      activeHoldCredits,
+      asOf:
+        normalizeOccurredAt(
+          asOf,
+          this.now
+        )
+    };
+
+    return signReceipt(
+      payload,
+      this.privateKey
+    );
+  }
 }
 
 export function verifyFundingDeposit(
@@ -789,6 +937,28 @@ export function verifyFundingHoldResolution(
 
   return registry
     .verifyHoldResolution(
+      receipt
+    );
+}
+
+
+export function verifyFundingStatement(
+  receipt,
+  registry
+) {
+  if (
+    !registry ||
+    typeof registry
+      .verifyStatement !==
+      "function"
+  ) {
+    throw new TypeError(
+      "funding source registry is required"
+    );
+  }
+
+  return registry
+    .verifyStatement(
       receipt
     );
 }

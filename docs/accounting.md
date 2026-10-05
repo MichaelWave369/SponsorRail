@@ -160,3 +160,53 @@ A won dispute releases the held portion and clears the provisional deficit.
 A lost dispute consumes the held portion and turns the provisional deficit into permanent liability.
 
 Campaign pool snapshots include `heldCredits` so quarantined credits remain visible in total-credit accounting.
+
+
+## Funding conservation audit v0.17
+
+SponsorRail now exposes an explicit campaign-level conservation check.
+
+```text
+economicFundingCredits
+  = operatorSeedCredits
+  + verifiedDepositCredits
+  - verifiedReversalCredits
+
+bookCredits
+  = available
+  + reserved
+  + spent
+  + held
+
+liabilityAdjustedBookCredits
+  = bookCredits
+  - outstandingLiabilityCredits
+
+balanceDelta
+  = liabilityAdjustedBookCredits
+  - economicFundingCredits
+```
+
+A healthy ledger requires:
+
+```text
+balanceDelta = 0
+```
+
+and no deposit may violate:
+
+```text
+reversedCredits
++ activeHoldCredits
+<= depositCredits
+```
+
+This audit is computed from persisted tables rather than trusting cached totals.
+
+### External source reconciliation
+
+Funding-source statements are compared to local event totals at a signed `asOf` boundary.
+
+A non-zero delta is retained as an auditable mismatch.
+
+SponsorRail does not auto-credit, auto-debit, or rewrite events in response to reconciliation disagreement.

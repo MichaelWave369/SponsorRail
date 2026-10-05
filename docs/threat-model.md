@@ -419,3 +419,42 @@ Mitigation boundary: v0.16 requires a signed funding-source resolution. Automati
 Threat: an attacker releases or reverses a legitimate hold.
 
 Mitigation: hold resolutions require the same trusted funding-source signature boundary used for deposits, holds, and reversals.
+
+
+## Reconciliation threats added in v0.17
+
+### Forged external statement
+
+Threat: an attacker submits fake processor totals.
+
+Mitigation: statements require an enabled registered funding-source Ed25519 signature.
+
+### Statement replay
+
+Threat: one valid statement is repeatedly inserted into the audit ledger.
+
+Mitigation: statement IDs and statement hashes provide durable idempotency.
+
+### Statement mutation
+
+Threat: a statement ID is reused with changed totals.
+
+Mitigation: a different signed payload under the same statement ID fails as an idempotency conflict.
+
+### Reconciliation-driven balance corruption
+
+Threat: an external disagreement automatically changes SponsorRail balances.
+
+Mitigation: reconciliation is strictly read-only with respect to campaign accounting.
+
+### Historical-state distortion
+
+Threat: a hold resolved today disappears from a statement describing yesterday.
+
+Mitigation: reconciliation reconstructs hold activity from placement and resolution timestamps at the statement `asOf` boundary.
+
+### Silent internal drift
+
+Threat: raw database corruption changes pool balances while event history remains intact.
+
+Mitigation: `auditCampaignFunding()` independently recomputes conservation and exposes a non-zero balance delta.
