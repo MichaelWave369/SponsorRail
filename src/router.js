@@ -184,6 +184,16 @@ export class ProviderRouter {
       String(providerId);
 
     if (
+      provider.providerId &&
+      String(provider.providerId) !==
+        id
+    ) {
+      throw new Error(
+        "providerId does not match provider adapter identity"
+      );
+    }
+
+    if (
       this.#providers.has(id) &&
       !replace
     ) {
