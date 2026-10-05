@@ -385,7 +385,7 @@ export class FundingSourceRegistry {
       of [
         receipt.depositedCredits,
         receipt.reversedCredits,
-        receipt.activeHeldCredits
+        receipt.activeHoldCredits
       ]
     ) {
       if (
@@ -399,7 +399,7 @@ export class FundingSourceRegistry {
     if (
       receipt.reversedCredits >
         receipt.depositedCredits ||
-      receipt.activeHeldCredits >
+      receipt.activeHoldCredits >
         (
           receipt.depositedCredits -
           receipt.reversedCredits
@@ -764,7 +764,7 @@ export class SignedFundingSource {
     campaignId,
     depositedCredits,
     reversedCredits,
-    activeHeldCredits,
+    activeHoldCredits,
     statementId =
       randomUUID(),
     asOf =
@@ -788,8 +788,8 @@ export class SignedFundingSource {
           reversedCredits
         ],
         [
-          "activeHeldCredits",
-          activeHeldCredits
+          "activeHoldCredits",
+          activeHoldCredits
         ]
       ]
     ) {
@@ -813,14 +813,14 @@ export class SignedFundingSource {
     }
 
     if (
-      activeHeldCredits >
+      activeHoldCredits >
         (
           depositedCredits -
           reversedCredits
         )
     ) {
       throw new TypeError(
-        "activeHeldCredits exceeds remaining funded credits"
+        "activeHoldCredits exceeds remaining funded credits"
       );
     }
 
@@ -837,7 +837,7 @@ export class SignedFundingSource {
         this.asset,
       depositedCredits,
       reversedCredits,
-      activeHeldCredits,
+      activeHoldCredits,
       asOf:
         normalizeOccurredAt(
           asOf,
