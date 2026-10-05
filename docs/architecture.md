@@ -287,3 +287,36 @@ ACTIVE
 The hold table is current state; hold-resolution rows are append-only evidence.
 
 Quarantined credits remain part of campaign total credits but are excluded from `available` and therefore cannot authorize new work.
+
+
+## Reconciliation plane
+
+v0.17 adds a read-only audit plane above funding state.
+
+```text
+funding source
+     |
+     | signed statement
+     v
+statement verifier
+     |
+     v
+historical ledger reconstruction
+     |
+     +-- deposits
+     +-- reversals
+     +-- active holds as-of time
+     |
+     v
+reconciliation report
+     |
+     +-- MATCH
+     |
+     +-- MISMATCH -> evidence only
+```
+
+A separate internal audit recomputes credit conservation from the live campaign tables.
+
+Neither path has authority to mutate balances.
+
+This keeps reconciliation observational: disagreement can trigger investigation, but not silently manufacture or destroy credits.
