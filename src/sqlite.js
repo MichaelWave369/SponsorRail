@@ -1257,6 +1257,9 @@ SELECT
 FROM sponsor_campaigns c
 JOIN sponsor_pools p
   ON p.id = c.pool_id
+LEFT JOIN campaign_funding_liabilities l
+  ON l.campaign_id = c.campaign_id
+WHERE COALESCE(l.outstanding_credits, 0) = 0
 ORDER BY c.priority DESC, c.campaign_id
 `)
         .all();
@@ -2396,6 +2399,9 @@ SELECT
 FROM sponsor_pools p
 JOIN sponsor_campaigns c
   ON c.pool_id = p.id
+LEFT JOIN campaign_funding_liabilities l
+  ON l.campaign_id = c.campaign_id
+WHERE COALESCE(l.outstanding_credits, 0) = 0
 ORDER BY c.priority DESC, c.campaign_id
 `)
             .all();
