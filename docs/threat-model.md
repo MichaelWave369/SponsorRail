@@ -137,3 +137,36 @@ Mitigation: receipts record only coarse routing evidence. Raw probe payloads sta
 Threat: the cheapest provider is selected despite privacy or capability mismatch.
 
 Mitigation: privacy, capability, compute, and explicit cost limits are eligibility gates. Price affects ranking only among eligible providers.
+
+
+## Failover threats added in v0.9
+
+### Duplicate execution
+
+Threat: a provider completes work but the response is lost, causing SponsorRail to run the task again elsewhere.
+
+Mitigation: automatic failover requires explicit `safeToRetry=true`. Generic timeouts and uncertain transport failures stop instead of rerunning.
+
+### Failing-provider storm
+
+Threat: every new task repeatedly probes or executes against a known-bad provider.
+
+Mitigation: consecutive failures open a circuit. Open providers are routing-ineligible and are not probed until cooldown.
+
+### Circuit poisoning
+
+Threat: one transient failure permanently removes a provider.
+
+Mitigation: failure threshold and cooldown are configurable. Expired circuits become half-open and can recover on success.
+
+### Error leakage
+
+Threat: provider error text contains infrastructure details or private material and is copied into receipts.
+
+Mitigation: receipts record provider IDs and coarse failure/failover facts, not raw error messages.
+
+### Sponsor credit stacking
+
+Threat: multiple failover attempts reserve sponsor credits simultaneously.
+
+Mitigation: each failed attempt releases its reservation before the next provider is authorized.
