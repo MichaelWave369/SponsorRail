@@ -103,6 +103,96 @@ function rawEvent(
   );
 }
 
+
+function refundEvent({
+  eventId = "evt_refund",
+  eventType = "refund.created",
+  refundId = "re_test_1",
+  paymentIntentId =
+    "pi_test_1",
+  amount = 200,
+  currency = "usd",
+  status = "succeeded",
+  livemode = false,
+  created = 950
+} = {}) {
+  return {
+    id: eventId,
+    object: "event",
+    created,
+    livemode,
+    type: eventType,
+    data: {
+      object: {
+        id: refundId,
+        object: "refund",
+        amount,
+        currency,
+        payment_intent:
+          paymentIntentId,
+        status,
+        created
+      }
+    }
+  };
+}
+
+function disputeEvent({
+  eventId =
+    "evt_dispute",
+  disputeId =
+    "du_test_1",
+  paymentIntentId =
+    "pi_test_1",
+  amount = 100,
+  currency = "usd",
+  status = "lost",
+  livemode = false,
+  created = 960
+} = {}) {
+  return {
+    id: eventId,
+    object: "event",
+    created,
+    livemode,
+    type:
+      "charge.dispute.closed",
+    data: {
+      object: {
+        id: disputeId,
+        object:
+          "dispute",
+        amount,
+        currency,
+        payment_intent:
+          paymentIntentId,
+        status,
+        created
+      }
+    }
+  };
+}
+
+function rawRefund(
+  overrides = {}
+) {
+  return JSON.stringify(
+    refundEvent(
+      overrides
+    )
+  );
+}
+
+function rawDispute(
+  overrides = {}
+) {
+  return JSON.stringify(
+    disputeEvent(
+      overrides
+    )
+  );
+}
+
 function makeAdapter(
   overrides = {}
 ) {
@@ -721,6 +811,564 @@ test(
         )
         .verifiedDepositCredits,
       500
+    );
+
+    broker.close();
+  }
+);
+
+
+test(
+  "successful Stripe partial refund reverses only refunded credits",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 500,
+        paymentIntentId:
+          "pi_refund"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(
+          payment
+        ),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const refund =
+      rawRefund({
+        refundId: "re_partial",
+        paymentIntentId:
+          "pi_refund",
+        amount: 200
+      });
+
+    const reversed =
+      adapter
+        .handleReversalWebhook({
+          rawBody: refund,
+          signatureHeader:
+            stripeHeader(
+              refund
+            ),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      reversed.accepted,
+      true
+    );
+
+    assert.equal(
+      reversed.credits,
+      400
+    );
+
+    assert.equal(
+      reversed.reversal
+        .availableDebited,
+      400
+    );
+
+    const snapshot =
+      broker.fundingSnapshot(
+        "stripe-campaign"
+      );
+
+    assert.equal(
+      snapshot
+        .verifiedDepositCredits,
+      1000
+    );
+
+    assert.equal(
+      snapshot
+        .verifiedReversalCredits,
+      400
+    );
+
+    assert.equal(
+      snapshot
+        .netVerifiedFundingCredits,
+      600
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "Stripe refund retry is idempotent across created and updated events",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 500,
+        paymentIntentId:
+          "pi_retry"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(payment),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const created =
+      rawRefund({
+        eventId:
+          "evt_refund_created",
+        eventType:
+          "refund.created",
+        refundId:
+          "re_same",
+        paymentIntentId:
+          "pi_retry",
+        amount: 100,
+        created: 950
+      });
+
+    const updated =
+      rawRefund({
+        eventId:
+          "evt_refund_updated",
+        eventType:
+          "refund.updated",
+        refundId:
+          "re_same",
+        paymentIntentId:
+          "pi_retry",
+        amount: 100,
+        created: 950
+      });
+
+    const first =
+      adapter
+        .handleReversalWebhook({
+          rawBody: created,
+          signatureHeader:
+            stripeHeader(
+              created
+            ),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    const second =
+      adapter
+        .handleReversalWebhook({
+          rawBody: updated,
+          signatureHeader:
+            stripeHeader(
+              updated
+            ),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      first.reversal.applied,
+      true
+    );
+
+    assert.equal(
+      second.reversal
+        .idempotent,
+      true
+    );
+
+    assert.equal(
+      broker
+        .listFundingReversals()
+        .length,
+      1
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "pending or failed Stripe refund does not mutate SponsorRail credits",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 100,
+        paymentIntentId:
+          "pi_pending"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(payment),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const pending =
+      rawRefund({
+        paymentIntentId:
+          "pi_pending",
+        status: "pending"
+      });
+
+    const result =
+      adapter
+        .handleReversalWebhook({
+          rawBody: pending,
+          signatureHeader:
+            stripeHeader(
+              pending
+            ),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      result.ignored,
+      true
+    );
+
+    assert.equal(
+      broker
+        .fundingSnapshot(
+          "stripe-campaign"
+        )
+        .verifiedReversalCredits,
+      0
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "final lost Stripe dispute creates reversal while won dispute is ignored",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 500,
+        paymentIntentId:
+          "pi_dispute"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(payment),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const won =
+      rawDispute({
+        disputeId:
+          "du_won",
+        paymentIntentId:
+          "pi_dispute",
+        amount: 100,
+        status: "won"
+      });
+
+    const ignored =
+      adapter
+        .handleReversalWebhook({
+          rawBody: won,
+          signatureHeader:
+            stripeHeader(won),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      ignored.ignored,
+      true
+    );
+
+    const lost =
+      rawDispute({
+        disputeId:
+          "du_lost",
+        paymentIntentId:
+          "pi_dispute",
+        amount: 100,
+        status: "lost"
+      });
+
+    const reversed =
+      adapter
+        .handleReversalWebhook({
+          rawBody: lost,
+          signatureHeader:
+            stripeHeader(lost),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      reversed.accepted,
+      true
+    );
+
+    assert.equal(
+      reversed
+        .reversalReceipt
+        .reason,
+      "dispute_loss"
+    );
+
+    assert.equal(
+      broker
+        .fundingSnapshot(
+          "stripe-campaign"
+        )
+        .verifiedReversalCredits,
+      200
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "Stripe reversal must resolve to original PaymentIntent deposit",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const refund =
+      rawRefund({
+        paymentIntentId:
+          "pi_unknown"
+      });
+
+    assert.throws(
+      () =>
+        adapter
+          .handleReversalWebhook({
+            rawBody: refund,
+            signatureHeader:
+              stripeHeader(
+                refund
+              ),
+            broker,
+            fundingSourceRegistry:
+              registry
+          }),
+      /no matching SponsorRail Stripe deposit/
     );
 
     broker.close();
