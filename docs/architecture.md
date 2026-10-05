@@ -262,3 +262,28 @@ funding source
 Funding history is append-only. A reversal references its original deposit instead of modifying or deleting that deposit.
 
 Campaign liability is intentionally separate from spent compute. This preserves historical truth while preventing future sponsored work from consuming credits that the campaign no longer economically owns.
+
+
+## Provisional funding-risk plane
+
+v0.16 inserts a temporary risk state between verified funding and permanent reversal.
+
+```text
+deposit
+  |
+  v
+ACTIVE
+  |
+  +-- dispute -> HOLD
+                 |
+          +------+------+
+          |             |
+        release       reverse
+          |             |
+       available    reversal ledger
+                    + liability
+```
+
+The hold table is current state; hold-resolution rows are append-only evidence.
+
+Quarantined credits remain part of campaign total credits but are excluded from `available` and therefore cannot authorize new work.
