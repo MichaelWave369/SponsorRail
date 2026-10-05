@@ -24,9 +24,11 @@ export async function loadSqliteBackend() {
 
 export {
   ProviderRegistry,
+  ProviderUnavailableError,
   SignedComputeProvider,
   createProviderKeyPair,
   executeSponsoredProviderTask,
+  isSafeProviderRetry,
   verifyProviderUsageReceipt
 } from "./provider.js";
 
@@ -38,3 +40,7 @@ export {
   ProviderRouter,
   executeRoutedSponsoredTask
 } from "./router.js";
+
+export {
+  ProviderHealthTracker
+} from "./health.js";
