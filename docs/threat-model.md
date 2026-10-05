@@ -263,3 +263,42 @@ Mitigation: campaign authorization uses the same transactional conditional balan
 Threat: a funded grant survives restart but loses which campaign paid for it.
 
 Mitigation: safe campaign funding metadata is snapshotted into the durable grant's `campaign_json` field.
+
+
+## Funding provenance threats added in v0.13
+
+### Forged top-up
+
+Threat: an attacker invents campaign credits.
+
+Mitigation: campaign deposits require a valid Ed25519 receipt from an enabled operator-registered funding source.
+
+### Deposit replay
+
+Threat: the same valid deposit receipt is submitted repeatedly.
+
+Mitigation: deposit IDs are durable primary keys and exact replay is idempotent.
+
+### Reference reminting
+
+Threat: one external payment/grant is represented by multiple deposit IDs.
+
+Mitigation: non-null external references are unique per funding source.
+
+### Deposit mutation
+
+Threat: a valid deposit ID is reused with a larger amount or different campaign.
+
+Mitigation: the canonical signed receipt hash must match the existing ledger entry; otherwise SponsorRail raises an idempotency conflict.
+
+### False per-task provenance
+
+Threat: a pool-level deposit is presented as proof that a specific external payment funded a specific task.
+
+Mitigation: v0.13 explicitly reports pool-level provenance only. Per-task lot accounting is not claimed.
+
+### Funding-source key compromise
+
+Threat: a compromised trusted source key mints fraudulent credits.
+
+Mitigation boundary: source-key rotation, revocation history, hardware-backed signing, and external settlement reconciliation remain future production hardening.
