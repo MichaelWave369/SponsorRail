@@ -35,3 +35,47 @@ An expired grant cannot be renewed.
 ## Current boundary
 
 The reference JSON store is single-process. Idempotency is durable across normal restart, but not yet implemented on a database transaction with multi-writer concurrency guarantees.
+
+
+## Funding provenance ledger
+
+v0.13 adds a funding-side ledger before ordinary reserve/settle accounting.
+
+A successful verified deposit performs one SQLite transaction:
+
+```text
+verify signed deposit
+        |
+        v
+increase campaign available credits
+        +
+append funding_deposits row
+        |
+        v
+commit
+```
+
+The credit increase and ledger record cannot intentionally commit independently.
+
+### Provenance snapshot
+
+`fundingSnapshot(campaignId)` distinguishes:
+
+```text
+operatorSeedCredits
+verifiedDepositCount
+verifiedDepositCredits
+currentAvailableCredits
+currentReservedCredits
+currentSpentCredits
+```
+
+Operator seed credits are retained for backward compatibility and local/testing workflows. They are not represented as externally verified deposits.
+
+### Replay safety
+
+Exact signed-deposit replay is idempotent.
+
+Deposit-ID mutation and duplicate external-reference minting fail closed.
+
+This is distinct from execution settlement idempotency; SponsorRail now protects replay on both the **money-in** and **compute-spend** sides.
