@@ -140,6 +140,8 @@ function refundEvent({
 function disputeEvent({
   eventId =
     "evt_dispute",
+  eventType =
+    "charge.dispute.closed",
   disputeId =
     "du_test_1",
   paymentIntentId =
@@ -156,7 +158,7 @@ function disputeEvent({
     created,
     livemode,
     type:
-      "charge.dispute.closed",
+      eventType,
     data: {
       object: {
         id: disputeId,
@@ -1369,6 +1371,559 @@ test(
               registry
           }),
       /no matching SponsorRail Stripe deposit/
+    );
+
+    broker.close();
+  }
+);
+
+
+test(
+  "Stripe dispute creation quarantines credits with a deterministic hold",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 500,
+        paymentIntentId:
+          "pi_hold"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(payment),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const opened =
+      rawDispute({
+        eventId:
+          "evt_dispute_open",
+        eventType:
+          "charge.dispute.created",
+        disputeId:
+          "du_hold",
+        paymentIntentId:
+          "pi_hold",
+        amount: 100,
+        status:
+          "needs_response"
+      });
+
+    const result =
+      adapter
+        .handleDisputeHoldWebhook({
+          rawBody: opened,
+          signatureHeader:
+            stripeHeader(
+              opened
+            ),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      result.kind,
+      "hold"
+    );
+
+    assert.equal(
+      result.credits,
+      200
+    );
+
+    assert.equal(
+      result.hold.heldCredits,
+      200
+    );
+
+    const snapshot =
+      broker.fundingSnapshot(
+        "stripe-campaign"
+      );
+
+    assert.equal(
+      snapshot.activeHeldCredits,
+      200
+    );
+
+    assert.equal(
+      snapshot
+        .verifiedReversalCredits,
+      0
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "Stripe dispute update replays the same hold idempotently",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 500,
+        paymentIntentId:
+          "pi_update"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(payment),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const created =
+      rawDispute({
+        eventId:
+          "evt_created",
+        eventType:
+          "charge.dispute.created",
+        disputeId:
+          "du_update",
+        paymentIntentId:
+          "pi_update",
+        amount: 100,
+        status:
+          "needs_response",
+        created: 960
+      });
+
+    const updated =
+      rawDispute({
+        eventId:
+          "evt_updated",
+        eventType:
+          "charge.dispute.updated",
+        disputeId:
+          "du_update",
+        paymentIntentId:
+          "pi_update",
+        amount: 100,
+        status:
+          "under_review",
+        created: 960
+      });
+
+    const first =
+      adapter
+        .handleDisputeHoldWebhook({
+          rawBody: created,
+          signatureHeader:
+            stripeHeader(
+              created
+            ),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    const second =
+      adapter
+        .handleDisputeHoldWebhook({
+          rawBody: updated,
+          signatureHeader:
+            stripeHeader(
+              updated
+            ),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      first.hold.applied,
+      true
+    );
+
+    assert.equal(
+      second.hold.idempotent,
+      true
+    );
+
+    assert.equal(
+      broker.listFundingHolds()
+        .length,
+      1
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "won Stripe dispute releases its active hold",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 500,
+        paymentIntentId:
+          "pi_won_hold"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(payment),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const opened =
+      rawDispute({
+        eventType:
+          "charge.dispute.created",
+        disputeId:
+          "du_won_hold",
+        paymentIntentId:
+          "pi_won_hold",
+        amount: 100,
+        status:
+          "needs_response"
+      });
+
+    adapter
+      .handleDisputeHoldWebhook({
+        rawBody: opened,
+        signatureHeader:
+          stripeHeader(opened),
+        broker,
+        fundingSourceRegistry:
+          registry
+      });
+
+    const closed =
+      rawDispute({
+        eventId:
+          "evt_won_closed",
+        eventType:
+          "charge.dispute.closed",
+        disputeId:
+          "du_won_hold",
+        paymentIntentId:
+          "pi_won_hold",
+        amount: 100,
+        status: "won",
+        created: 970
+      });
+
+    const result =
+      adapter
+        .handleReversalWebhook({
+          rawBody: closed,
+          signatureHeader:
+            stripeHeader(closed),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      result.kind,
+      "hold_release"
+    );
+
+    assert.equal(
+      broker.fundingSnapshot(
+        "stripe-campaign"
+      ).activeHoldCount,
+      0
+    );
+
+    assert.equal(
+      broker.fundingSnapshot(
+        "stripe-campaign"
+      ).verifiedReversalCredits,
+      0
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "lost Stripe dispute converts active hold into one permanent reversal",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const broker =
+      new SqliteFundingBroker(
+        dbPath()
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const payment =
+      rawEvent({
+        amountTotal: 500,
+        paymentIntentId:
+          "pi_lost_hold"
+      });
+
+    adapter.handleAndDeposit({
+      rawBody: payment,
+      signatureHeader:
+        stripeHeader(payment),
+      broker,
+      fundingSourceRegistry:
+        registry
+    });
+
+    const opened =
+      rawDispute({
+        eventType:
+          "charge.dispute.created",
+        disputeId:
+          "du_lost_hold",
+        paymentIntentId:
+          "pi_lost_hold",
+        amount: 100,
+        status:
+          "needs_response"
+      });
+
+    adapter
+      .handleDisputeHoldWebhook({
+        rawBody: opened,
+        signatureHeader:
+          stripeHeader(opened),
+        broker,
+        fundingSourceRegistry:
+          registry
+      });
+
+    const closed =
+      rawDispute({
+        eventId:
+          "evt_lost_closed",
+        eventType:
+          "charge.dispute.closed",
+        disputeId:
+          "du_lost_hold",
+        paymentIntentId:
+          "pi_lost_hold",
+        amount: 100,
+        status: "lost",
+        created: 970
+      });
+
+    const first =
+      adapter
+        .handleReversalWebhook({
+          rawBody: closed,
+          signatureHeader:
+            stripeHeader(closed),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    const replay =
+      adapter
+        .handleReversalWebhook({
+          rawBody: closed,
+          signatureHeader:
+            stripeHeader(closed),
+          broker,
+          fundingSourceRegistry:
+            registry
+        });
+
+    assert.equal(
+      first.kind,
+      "hold_reversal"
+    );
+
+    assert.equal(
+      first.resolution.applied,
+      true
+    );
+
+    assert.equal(
+      replay.resolution
+        .idempotent,
+      true
+    );
+
+    const snapshot =
+      broker.fundingSnapshot(
+        "stripe-campaign"
+      );
+
+    assert.equal(
+      snapshot.activeHoldCount,
+      0
+    );
+
+    assert.equal(
+      snapshot
+        .verifiedReversalCredits,
+      200
+    );
+
+    assert.equal(
+      broker
+        .listFundingReversals()
+        .length,
+      1
     );
 
     broker.close();
