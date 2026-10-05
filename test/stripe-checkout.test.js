@@ -56,6 +56,8 @@ function stripeEvent({
   eventType =
     "checkout.session.completed",
   sessionId = "cs_test_1",
+  paymentIntentId =
+    "pi_test_1",
   amountTotal = 1000,
   currency = "usd",
   paymentStatus = "paid",
@@ -75,6 +77,8 @@ function stripeEvent({
         id: sessionId,
         object:
           "checkout.session",
+        payment_intent:
+          paymentIntentId,
         created:
           sessionCreated,
         mode,
@@ -253,7 +257,7 @@ test(
       mapped
         .depositReceipt
         .externalReference,
-      "stripe-checkout:cs_test_1"
+      "stripe-payment-intent:pi_test_1"
     );
 
     assert.equal(
