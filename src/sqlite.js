@@ -1331,9 +1331,16 @@ INSERT INTO sponsor_campaigns (
         row.id
       );
 
+    const heldCredits =
+      campaign
+        ? this.#heldCredits(
+            campaign.campaignId
+          )
+        : 0;
+
     return Object.freeze({
       schema:
-        "sponsorrail.sqlite-pool.v0.12",
+        "sponsorrail.sqlite-pool.v0.16",
       id:
         String(row.id),
       sponsorDisclosure:
@@ -1351,10 +1358,12 @@ INSERT INTO sponsor_campaigns (
       availableCredits,
       reservedCredits,
       spentCredits,
+      heldCredits,
       totalCredits:
         availableCredits +
         reservedCredits +
-        spentCredits
+        spentCredits +
+        heldCredits
     });
   }
 
