@@ -3531,6 +3531,498 @@ WHERE campaign_id = ?
     });
   }
 
+  auditCampaignFunding(
+    campaignId
+  ) {
+    const snapshot =
+      this.fundingSnapshot(
+        campaignId
+      );
+
+    if (!snapshot) {
+      return null;
+    }
+
+    const economicFundingCredits =
+      snapshot.operatorSeedCredits +
+      snapshot.verifiedDepositCredits -
+      snapshot.verifiedReversalCredits;
+
+    const bookCredits =
+      snapshot.currentAvailableCredits +
+      snapshot.currentReservedCredits +
+      snapshot.currentSpentCredits +
+      snapshot.activeHeldCredits;
+
+    const liabilityAdjustedBookCredits =
+      bookCredits -
+      snapshot
+        .outstandingLiabilityCredits;
+
+    const balanceDelta =
+      liabilityAdjustedBookCredits -
+      economicFundingCredits;
+
+    const exposures =
+      this.#db
+        .prepare(`
+SELECT
+  d.deposit_id,
+  d.credits,
+  COALESCE((
+    SELECT SUM(r.credits)
+    FROM funding_reversals r
+    WHERE r.original_deposit_id =
+      d.deposit_id
+  ), 0) AS reversed_credits,
+  COALESCE((
+    SELECT SUM(h.credits)
+    FROM funding_holds h
+    WHERE h.original_deposit_id =
+      d.deposit_id
+      AND h.status = 'active'
+  ), 0) AS active_hold_credits
+FROM funding_deposits d
+WHERE d.campaign_id = ?
+ORDER BY d.deposit_id
+`)
+        .all(
+          String(
+            campaignId
+          )
+        )
+        .map(
+          (row) => {
+            const depositCredits =
+              Number(
+                row.credits
+              );
+
+            const reversedCredits =
+              Number(
+                row.reversed_credits
+              );
+
+            const activeHoldCredits =
+              Number(
+                row.active_hold_credits
+              );
+
+            return Object.freeze({
+              depositId:
+                String(
+                  row.deposit_id
+                ),
+              depositCredits,
+              reversedCredits,
+              activeHoldCredits,
+              remainingCredits:
+                depositCredits -
+                reversedCredits -
+                activeHoldCredits,
+              valid:
+                reversedCredits +
+                  activeHoldCredits <=
+                depositCredits
+            });
+          }
+        );
+
+    const violations =
+      exposures.filter(
+        (entry) =>
+          !entry.valid
+      );
+
+    return Object.freeze({
+      schema:
+        "sponsorrail.funding-audit.v0.17",
+      campaignId:
+        String(
+          campaignId
+        ),
+      economicFundingCredits,
+      bookCredits,
+      outstandingLiabilityCredits:
+        snapshot
+          .outstandingLiabilityCredits,
+      liabilityAdjustedBookCredits,
+      balanceDelta,
+      exposureCount:
+        exposures.length,
+      exposureViolationCount:
+        violations.length,
+      exposures:
+        Object.freeze(
+          exposures
+        ),
+      healthy:
+        balanceDelta === 0 &&
+        violations.length === 0
+    });
+  }
+
+  reconcileFundingStatement(
+    statement,
+    fundingSourceRegistry
+  ) {
+    if (
+      !verifyFundingStatement(
+        statement,
+        fundingSourceRegistry
+      )
+    ) {
+      throw new Error(
+        "funding statement verification failed"
+      );
+    }
+
+    if (
+      !this.#campaignRow(
+        statement.campaignId
+      )
+    ) {
+      throw new Error(
+        "unknown campaign"
+      );
+    }
+
+    const statementJson =
+      canonicalJson(
+        statement
+      );
+
+    const statementHash =
+      createHash("sha256")
+        .update(
+          statementJson
+        )
+        .digest("hex");
+
+    const existing =
+      this.#db
+        .prepare(
+          "SELECT * FROM funding_reconciliations WHERE statement_id = ?"
+        )
+        .get(
+          String(
+            statement.statementId
+          )
+        );
+
+    if (existing) {
+      if (
+        String(
+          existing
+            .statement_hash
+        ) !==
+        statementHash
+      ) {
+        throw new Error(
+          "funding statement idempotency conflict"
+        );
+      }
+
+      return Object.freeze({
+        ...JSON.parse(
+          existing.report_json
+        ),
+        idempotent: true
+      });
+    }
+
+    const asOf =
+      String(
+        statement.asOf
+      );
+
+    const deposits =
+      this.#db
+        .prepare(`
+SELECT
+  COUNT(*) AS count,
+  COALESCE(SUM(credits), 0) AS credits
+FROM funding_deposits
+WHERE source_id = ?
+  AND campaign_id = ?
+  AND occurred_at <= ?
+`)
+        .get(
+          String(
+            statement.sourceId
+          ),
+          String(
+            statement.campaignId
+          ),
+          asOf
+        );
+
+    const reversals =
+      this.#db
+        .prepare(`
+SELECT
+  COUNT(*) AS count,
+  COALESCE(SUM(credits), 0) AS credits
+FROM funding_reversals
+WHERE source_id = ?
+  AND campaign_id = ?
+  AND occurred_at <= ?
+`)
+        .get(
+          String(
+            statement.sourceId
+          ),
+          String(
+            statement.campaignId
+          ),
+          asOf
+        );
+
+    const holds =
+      this.#db
+        .prepare(`
+SELECT
+  COUNT(*) AS count,
+  COALESCE(SUM(h.credits), 0) AS credits
+FROM funding_holds h
+WHERE h.source_id = ?
+  AND h.campaign_id = ?
+  AND h.placed_at <= ?
+  AND NOT EXISTS (
+    SELECT 1
+    FROM funding_hold_resolutions r
+    WHERE r.hold_id = h.hold_id
+      AND r.occurred_at <= ?
+  )
+`)
+        .get(
+          String(
+            statement.sourceId
+          ),
+          String(
+            statement.campaignId
+          ),
+          asOf,
+          asOf
+        );
+
+    const local =
+      Object.freeze({
+        depositedCredits:
+          Number(
+            deposits.credits
+          ),
+        reversedCredits:
+          Number(
+            reversals.credits
+          ),
+        activeHoldCredits:
+          Number(
+            holds.credits
+          ),
+        depositCount:
+          Number(
+            deposits.count
+          ),
+        reversalCount:
+          Number(
+            reversals.count
+          ),
+        activeHoldCount:
+          Number(
+            holds.count
+          )
+      });
+
+    const external =
+      Object.freeze({
+        depositedCredits:
+          statement
+            .depositedCredits,
+        reversedCredits:
+          statement
+            .reversedCredits,
+        activeHoldCredits:
+          statement
+            .activeHoldCredits
+      });
+
+    const deltas =
+      Object.freeze({
+        depositedCredits:
+          local.depositedCredits -
+          external
+            .depositedCredits,
+        reversedCredits:
+          local.reversedCredits -
+          external
+            .reversedCredits,
+        activeHoldCredits:
+          local.activeHoldCredits -
+          external
+            .activeHoldCredits
+      });
+
+    const matched =
+      deltas.depositedCredits ===
+        0 &&
+      deltas.reversedCredits ===
+        0 &&
+      deltas.activeHoldCredits ===
+        0;
+
+    const recordedAt =
+      toIso(
+        normalizeTime(
+          this.#now(),
+          "reconciliation time"
+        )
+      );
+
+    const reportBase = {
+      schema:
+        "sponsorrail.funding-reconciliation.v0.17",
+      statementId:
+        String(
+          statement.statementId
+        ),
+      sourceId:
+        String(
+          statement.sourceId
+        ),
+      campaignId:
+        String(
+          statement.campaignId
+        ),
+      asset:
+        String(
+          statement.asset
+        ),
+      asOf,
+      statementHash,
+      external,
+      local,
+      deltas,
+      matched,
+      recordedAt
+    };
+
+    const reportHash =
+      createHash("sha256")
+        .update(
+          canonicalJson(
+            reportBase
+          )
+        )
+        .digest("hex");
+
+    const report =
+      Object.freeze({
+        ...reportBase,
+        reportHash
+      });
+
+    this.#transaction(
+      () => {
+        this.#db
+          .prepare(`
+INSERT INTO funding_reconciliations (
+  statement_id,
+  source_id,
+  campaign_id,
+  asset,
+  as_of,
+  matched,
+  statement_hash,
+  report_hash,
+  report_json,
+  recorded_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+          .run(
+            report.statementId,
+            report.sourceId,
+            report.campaignId,
+            report.asset,
+            report.asOf,
+            report.matched
+              ? 1
+              : 0,
+            report.statementHash,
+            report.reportHash,
+            canonicalJson(
+              report
+            ),
+            report.recordedAt
+          );
+      }
+    );
+
+    return Object.freeze({
+      ...report,
+      idempotent: false
+    });
+  }
+
+  listFundingReconciliations({
+    campaignId = null,
+    sourceId = null,
+    matched = null
+  } = {}) {
+    const clauses = [];
+    const params = [];
+
+    if (campaignId !== null) {
+      clauses.push(
+        "campaign_id = ?"
+      );
+      params.push(
+        String(campaignId)
+      );
+    }
+
+    if (sourceId !== null) {
+      clauses.push(
+        "source_id = ?"
+      );
+      params.push(
+        String(sourceId)
+      );
+    }
+
+    if (matched !== null) {
+      clauses.push(
+        "matched = ?"
+      );
+      params.push(
+        matched === true
+          ? 1
+          : 0
+      );
+    }
+
+    const where =
+      clauses.length > 0
+        ? ` WHERE ${clauses.join(" AND ")}`
+        : "";
+
+    return Object.freeze(
+      this.#db
+        .prepare(
+          `SELECT report_json FROM funding_reconciliations${where} ORDER BY recorded_at, statement_id`
+        )
+        .all(...params)
+        .map(
+          (row) =>
+            Object.freeze(
+              JSON.parse(
+                row.report_json
+              )
+            )
+        )
+    );
+  }
+
   authorizeCampaign(
     task,
     preferences = {}
