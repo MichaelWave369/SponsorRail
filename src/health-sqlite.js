@@ -174,6 +174,13 @@ PRAGMA synchronous = NORMAL;`
     );
 
     this.#db.exec(`
+CREATE TABLE IF NOT EXISTS provider_health_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  failure_threshold INTEGER NOT NULL,
+  cooldown_ms INTEGER NOT NULL,
+  half_open_lease_ms INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS provider_health (
   provider_id TEXT PRIMARY KEY,
   successes INTEGER NOT NULL DEFAULT 0,
@@ -186,6 +193,49 @@ CREATE TABLE IF NOT EXISTS provider_health (
   half_open_lease_until TEXT
 );
 `);
+
+    this.#db
+      .prepare(`
+INSERT OR IGNORE INTO provider_health_config (
+  id,
+  failure_threshold,
+  cooldown_ms,
+  half_open_lease_ms
+) VALUES (1, ?, ?, ?)
+`)
+      .run(
+        this.#failureThreshold,
+        this.#cooldownMs,
+        this.#halfOpenLeaseMs
+      );
+
+    const config =
+      this.#db
+        .prepare(
+          "SELECT * FROM provider_health_config WHERE id = 1"
+        )
+        .get();
+
+    if (
+      Number(
+        config.failure_threshold
+      ) !==
+        this.#failureThreshold ||
+      Number(
+        config.cooldown_ms
+      ) !==
+        this.#cooldownMs ||
+      Number(
+        config.half_open_lease_ms
+      ) !==
+        this.#halfOpenLeaseMs
+    ) {
+      this.#db.close();
+
+      throw new Error(
+        "provider health configuration mismatch"
+      );
+    }
   }
 
   #transaction(fn) {
@@ -240,11 +290,8 @@ INSERT OR IGNORE INTO provider_health (
 
   status(providerId) {
     const id =
-      this.#transaction(
-        () =>
-          this.#ensure(
-            providerId
-          )
+      this.#ensure(
+        providerId
       );
 
     return rowStatus(
