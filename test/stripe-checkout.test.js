@@ -1,0 +1,724 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  createHmac
+} from "node:crypto";
+import {
+  mkdtempSync
+} from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import {
+  FundingSourceRegistry,
+  StripeCheckoutFundingAdapter,
+  createFundingSourceKeyPair,
+  loadSqliteBackend,
+  verifyFundingDeposit,
+  verifyStripeWebhookSignature
+} from "../src/index.js";
+
+const [major, minor] =
+  process.versions.node
+    .split(".")
+    .map(Number);
+
+const sqliteAvailable =
+  major > 22 ||
+  (
+    major === 22 &&
+    minor >= 5
+  );
+
+const WEBHOOK_SECRET =
+  "whsec_test_secret";
+
+function stripeHeader(
+  rawBody,
+  timestamp = 1000,
+  secret = WEBHOOK_SECRET
+) {
+  const signature =
+    createHmac(
+      "sha256",
+      secret
+    )
+      .update(
+        `${timestamp}.${rawBody}`
+      )
+      .digest("hex");
+
+  return `t=${timestamp},v1=${signature}`;
+}
+
+function stripeEvent({
+  eventId = "evt_1",
+  eventType =
+    "checkout.session.completed",
+  sessionId = "cs_test_1",
+  amountTotal = 1000,
+  currency = "usd",
+  paymentStatus = "paid",
+  mode = "payment",
+  livemode = false,
+  sessionCreated = 900,
+  metadata = {}
+} = {}) {
+  return {
+    id: eventId,
+    object: "event",
+    created: 1000,
+    livemode,
+    type: eventType,
+    data: {
+      object: {
+        id: sessionId,
+        object:
+          "checkout.session",
+        created:
+          sessionCreated,
+        mode,
+        payment_status:
+          paymentStatus,
+        amount_total:
+          amountTotal,
+        currency,
+        metadata
+      }
+    }
+  };
+}
+
+function rawEvent(
+  overrides = {}
+) {
+  return JSON.stringify(
+    stripeEvent(
+      overrides
+    )
+  );
+}
+
+function makeAdapter(
+  overrides = {}
+) {
+  const keys =
+    createFundingSourceKeyPair();
+
+  const adapter =
+    new StripeCheckoutFundingAdapter({
+      webhookSecret:
+        WEBHOOK_SECRET,
+      sourceId:
+        "stripe.checkout",
+      privateKey:
+        keys.privateKey,
+      campaignId:
+        "stripe-campaign",
+      creditsPerMinorUnit: {
+        usd: 2
+      },
+      now:
+        () => 1_000_000,
+      ...overrides
+    });
+
+  const registry =
+    new FundingSourceRegistry([
+      {
+        sourceId:
+          "stripe.checkout",
+        publicKey:
+          keys.publicKey
+      }
+    ]);
+
+  return {
+    keys,
+    adapter,
+    registry
+  };
+}
+
+function dbPath() {
+  const dir =
+    mkdtempSync(
+      join(
+        tmpdir(),
+        "sponsorrail-stripe-"
+      )
+    );
+
+  return join(
+    dir,
+    "stripe.db"
+  );
+}
+
+test(
+  "Stripe webhook signature verifies raw body with timestamp tolerance",
+  () => {
+    const rawBody =
+      rawEvent();
+
+    const header =
+      stripeHeader(
+        rawBody
+      );
+
+    assert.equal(
+      verifyStripeWebhookSignature({
+        rawBody,
+        signatureHeader:
+          header,
+        webhookSecret:
+          WEBHOOK_SECRET,
+        now:
+          () => 1_000_000
+      }),
+      true
+    );
+
+    assert.equal(
+      verifyStripeWebhookSignature({
+        rawBody:
+          rawBody + " ",
+        signatureHeader:
+          header,
+        webhookSecret:
+          WEBHOOK_SECRET,
+        now:
+          () => 1_000_000
+      }),
+      false
+    );
+
+    assert.equal(
+      verifyStripeWebhookSignature({
+        rawBody,
+        signatureHeader:
+          header,
+        webhookSecret:
+          WEBHOOK_SECRET,
+        toleranceSeconds:
+          10,
+        now:
+          () => 2_000_000
+      }),
+      false
+    );
+  }
+);
+
+test(
+  "Stripe Checkout adapter converts verified paid amount to signed credits",
+  () => {
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const rawBody =
+      rawEvent({
+        amountTotal: 1250,
+        metadata: {
+          sponsorrail_credits:
+            "999999999"
+        }
+      });
+
+    const mapped =
+      adapter.handleWebhook({
+        rawBody,
+        signatureHeader:
+          stripeHeader(
+            rawBody
+          )
+      });
+
+    assert.equal(
+      mapped.credits,
+      2500
+    );
+
+    assert.equal(
+      mapped
+        .depositReceipt
+        .depositId,
+      "stripe-checkout:cs_test_1"
+    );
+
+    assert.equal(
+      mapped
+        .depositReceipt
+        .externalReference,
+      "stripe-checkout:cs_test_1"
+    );
+
+    assert.equal(
+      mapped
+        .depositReceipt
+        .occurredAt,
+      "1970-01-01T00:15:00.000Z"
+    );
+
+    assert.equal(
+      verifyFundingDeposit(
+        mapped.depositReceipt,
+        registry
+      ),
+      true
+    );
+  }
+);
+
+test(
+  "Stripe Checkout adapter rejects invalid signature unpaid wrong mode and unsupported event",
+  () => {
+    const {
+      adapter
+    } =
+      makeAdapter();
+
+    const good =
+      rawEvent();
+
+    assert.throws(
+      () =>
+        adapter.handleWebhook({
+          rawBody: good,
+          signatureHeader:
+            stripeHeader(
+              good,
+              1000,
+              "wrong-secret"
+            )
+        }),
+      /signature verification failed/
+    );
+
+    for (
+      const [overrides, pattern]
+      of [
+        [
+          {
+            paymentStatus:
+              "unpaid"
+          },
+          /is not paid/
+        ],
+        [
+          {
+            mode:
+              "subscription"
+          },
+          /payment mode/
+        ],
+        [
+          {
+            eventType:
+              "payment_intent.succeeded"
+          },
+          /unsupported Stripe event/
+        ]
+      ]
+    ) {
+      const body =
+        rawEvent(
+          overrides
+        );
+
+      assert.throws(
+        () =>
+          adapter.handleWebhook({
+            rawBody: body,
+            signatureHeader:
+              stripeHeader(
+                body
+              )
+          }),
+        pattern
+      );
+    }
+  }
+);
+
+test(
+  "Stripe adapter defaults to test mode and requires explicit live-mode enablement",
+  () => {
+    const {
+      adapter
+    } =
+      makeAdapter();
+
+    const live =
+      rawEvent({
+        livemode: true
+      });
+
+    assert.throws(
+      () =>
+        adapter.handleWebhook({
+          rawBody: live,
+          signatureHeader:
+            stripeHeader(
+              live
+            )
+        }),
+      /livemode mismatch/
+    );
+
+    const {
+      adapter:
+        liveAdapter
+    } =
+      makeAdapter({
+        requiredLivemode:
+          true
+      });
+
+    assert.doesNotThrow(
+      () =>
+        liveAdapter
+          .handleWebhook({
+            rawBody: live,
+            signatureHeader:
+              stripeHeader(
+                live
+              )
+          })
+    );
+  }
+);
+
+test(
+  "Stripe adapter rejects unconfigured currencies and credit ceilings",
+  () => {
+    const {
+      adapter
+    } =
+      makeAdapter();
+
+    const eur =
+      rawEvent({
+        currency: "eur"
+      });
+
+    assert.throws(
+      () =>
+        adapter.handleWebhook({
+          rawBody: eur,
+          signatureHeader:
+            stripeHeader(
+              eur
+            )
+        }),
+      /currency is not configured/
+    );
+
+    const {
+      adapter:
+        capped
+    } =
+      makeAdapter({
+        maxCreditsPerDeposit:
+          100
+      });
+
+    const tooLarge =
+      rawEvent({
+        amountTotal: 100
+      });
+
+    assert.throws(
+      () =>
+        capped.handleWebhook({
+          rawBody:
+            tooLarge,
+          signatureHeader:
+            stripeHeader(
+              tooLarge
+            )
+        }),
+      /exceeds configured credit ceiling/
+    );
+  }
+);
+
+test(
+  "Stripe async payment success maps to same deterministic Checkout deposit",
+  () => {
+    const {
+      adapter
+    } =
+      makeAdapter();
+
+    const completed =
+      rawEvent({
+        eventId:
+          "evt_completed",
+        sessionId:
+          "cs_shared",
+        eventType:
+          "checkout.session.completed"
+      });
+
+    const asyncSuccess =
+      rawEvent({
+        eventId:
+          "evt_async",
+        sessionId:
+          "cs_shared",
+        eventType:
+          "checkout.session.async_payment_succeeded"
+      });
+
+    const first =
+      adapter.handleWebhook({
+        rawBody: completed,
+        signatureHeader:
+          stripeHeader(
+            completed
+          )
+      });
+
+    const second =
+      adapter.handleWebhook({
+        rawBody:
+          asyncSuccess,
+        signatureHeader:
+          stripeHeader(
+            asyncSuccess
+          )
+      });
+
+    assert.deepEqual(
+      second.depositReceipt,
+      first.depositReceipt
+    );
+  }
+);
+
+test(
+  "Stripe webhook deposits into SQLite exactly once across retries",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const database =
+      dbPath();
+
+    const broker =
+      new SqliteFundingBroker(
+        database
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 10,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant: 5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const body =
+      rawEvent({
+        amountTotal: 500
+      });
+
+    const first =
+      adapter.handleAndDeposit({
+        rawBody: body,
+        signatureHeader:
+          stripeHeader(
+            body
+          ),
+        broker,
+        fundingSourceRegistry:
+          registry
+      });
+
+    const replay =
+      adapter.handleAndDeposit({
+        rawBody: body,
+        signatureHeader:
+          stripeHeader(
+            body
+          ),
+        broker,
+        fundingSourceRegistry:
+          registry
+      });
+
+    assert.equal(
+      first.deposit.applied,
+      true
+    );
+
+    assert.equal(
+      replay.deposit
+        .idempotent,
+      true
+    );
+
+    assert.equal(
+      broker
+        .fundingSnapshot(
+          "stripe-campaign"
+        )
+        .verifiedDepositCredits,
+      1000
+    );
+
+    assert.equal(
+      broker
+        .campaignSnapshot(
+          "stripe-campaign"
+        )
+        .pool
+        .availableCredits,
+      1010
+    );
+
+    broker.close();
+  }
+);
+
+test(
+  "different successful Stripe events for one Checkout Session cannot mint twice",
+  {
+    skip:
+      !sqliteAvailable
+  },
+  async () => {
+    const {
+      SqliteFundingBroker
+    } =
+      await loadSqliteBackend();
+
+    const database =
+      dbPath();
+
+    const broker =
+      new SqliteFundingBroker(
+        database
+      );
+
+    broker.createCampaign({
+      campaignId:
+        "stripe-campaign",
+      sponsorDisclosure:
+        "Example Sponsor",
+      capabilityType:
+        "compute",
+      benefitDescription:
+        "Funds useful compute",
+      targetingMode:
+        "universal",
+      budgetCredits: 0 + 1,
+      eligibleTaskClasses:
+        ["*"],
+      allowedPrivacyModes:
+        ["blind"],
+      maxComputePerGrant:
+        5000
+    });
+
+    const {
+      adapter,
+      registry
+    } =
+      makeAdapter();
+
+    const completed =
+      rawEvent({
+        eventId:
+          "evt_one",
+        sessionId:
+          "cs_same",
+        amountTotal: 250
+      });
+
+    const asyncSucceeded =
+      rawEvent({
+        eventId:
+          "evt_two",
+        sessionId:
+          "cs_same",
+        amountTotal: 250,
+        eventType:
+          "checkout.session.async_payment_succeeded"
+      });
+
+    const first =
+      adapter.handleAndDeposit({
+        rawBody: completed,
+        signatureHeader:
+          stripeHeader(
+            completed
+          ),
+        broker,
+        fundingSourceRegistry:
+          registry
+      });
+
+    const second =
+      adapter.handleAndDeposit({
+        rawBody:
+          asyncSucceeded,
+        signatureHeader:
+          stripeHeader(
+            asyncSucceeded
+          ),
+        broker,
+        fundingSourceRegistry:
+          registry
+      });
+
+    assert.equal(
+      first.deposit.applied,
+      true
+    );
+
+    assert.equal(
+      second.deposit
+        .idempotent,
+      true
+    );
+
+    assert.equal(
+      broker
+        .fundingSnapshot(
+          "stripe-campaign"
+        )
+        .verifiedDepositCredits,
+      500
+    );
+
+    broker.close();
+  }
+);
