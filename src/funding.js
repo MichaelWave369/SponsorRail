@@ -268,6 +268,101 @@ export class FundingSourceRegistry {
         receipt
       );
   }
+
+  verifyHold(receipt) {
+    if (
+      receipt?.schema !==
+      "sponsorrail.funding-hold.v0.16"
+    ) {
+      return false;
+    }
+
+    if (
+      !receipt.holdId ||
+      !receipt.originalDepositId ||
+      !receipt.campaignId
+    ) {
+      return false;
+    }
+
+    if (
+      ![
+        "dispute",
+        "review",
+        "risk"
+      ].includes(
+        receipt.reason
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      !Number.isInteger(
+        receipt.credits
+      ) ||
+      receipt.credits <= 0
+    ) {
+      return false;
+    }
+
+    return this
+      .#verifySourceAndSignature(
+        receipt
+      );
+  }
+
+  verifyHoldResolution(receipt) {
+    if (
+      receipt?.schema !==
+      "sponsorrail.funding-hold-resolution.v0.16"
+    ) {
+      return false;
+    }
+
+    if (
+      !receipt.resolutionId ||
+      !receipt.holdId ||
+      !receipt.originalDepositId ||
+      !receipt.campaignId
+    ) {
+      return false;
+    }
+
+    if (
+      ![
+        "release",
+        "reverse"
+      ].includes(
+        receipt.outcome
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      receipt.outcome ===
+        "reverse" &&
+      receipt.reason !==
+        "dispute_loss"
+    ) {
+      return false;
+    }
+
+    if (
+      receipt.outcome ===
+        "release" &&
+      receipt.reason !==
+        "dispute_won"
+    ) {
+      return false;
+    }
+
+    return this
+      .#verifySourceAndSignature(
+        receipt
+      );
+  }
 }
 
 export class SignedFundingSource {
@@ -442,6 +537,178 @@ export class SignedFundingSource {
       this.privateKey
     );
   }
+
+  issueHold({
+    originalDepositId,
+    campaignId,
+    credits,
+    reason =
+      "dispute",
+    holdId =
+      randomUUID(),
+    externalReference =
+      null,
+    occurredAt =
+      null
+  }) {
+    if (
+      !originalDepositId ||
+      !campaignId
+    ) {
+      throw new TypeError(
+        "originalDepositId and campaignId are required"
+      );
+    }
+
+    if (
+      ![
+        "dispute",
+        "review",
+        "risk"
+      ].includes(reason)
+    ) {
+      throw new TypeError(
+        "unsupported funding hold reason"
+      );
+    }
+
+    assertPositiveInteger(
+      credits,
+      "credits"
+    );
+
+    const payload = {
+      schema:
+        "sponsorrail.funding-hold.v0.16",
+      holdId:
+        String(holdId),
+      sourceId:
+        this.sourceId,
+      originalDepositId:
+        String(
+          originalDepositId
+        ),
+      campaignId:
+        String(
+          campaignId
+        ),
+      asset:
+        this.asset,
+      credits,
+      reason:
+        String(reason),
+      externalReference:
+        externalReference ===
+          null
+          ? null
+          : String(
+              externalReference
+            ),
+      occurredAt:
+        normalizeOccurredAt(
+          occurredAt,
+          this.now
+        )
+    };
+
+    return signReceipt(
+      payload,
+      this.privateKey
+    );
+  }
+
+  issueHoldResolution({
+    holdId,
+    originalDepositId,
+    campaignId,
+    outcome,
+    reason,
+    resolutionId =
+      randomUUID(),
+    externalReference =
+      null,
+    occurredAt =
+      null
+  }) {
+    if (
+      !holdId ||
+      !originalDepositId ||
+      !campaignId
+    ) {
+      throw new TypeError(
+        "holdId, originalDepositId, and campaignId are required"
+      );
+    }
+
+    if (
+      ![
+        "release",
+        "reverse"
+      ].includes(outcome)
+    ) {
+      throw new TypeError(
+        "unsupported funding hold outcome"
+      );
+    }
+
+    const expectedReason =
+      outcome === "release"
+        ? "dispute_won"
+        : "dispute_loss";
+
+    if (
+      reason !==
+      expectedReason
+    ) {
+      throw new TypeError(
+        "funding hold resolution reason does not match outcome"
+      );
+    }
+
+    const payload = {
+      schema:
+        "sponsorrail.funding-hold-resolution.v0.16",
+      resolutionId:
+        String(
+          resolutionId
+        ),
+      sourceId:
+        this.sourceId,
+      holdId:
+        String(holdId),
+      originalDepositId:
+        String(
+          originalDepositId
+        ),
+      campaignId:
+        String(
+          campaignId
+        ),
+      asset:
+        this.asset,
+      outcome:
+        String(outcome),
+      reason:
+        String(reason),
+      externalReference:
+        externalReference ===
+          null
+          ? null
+          : String(
+              externalReference
+            ),
+      occurredAt:
+        normalizeOccurredAt(
+          occurredAt,
+          this.now
+        )
+    };
+
+    return signReceipt(
+      payload,
+      this.privateKey
+    );
+  }
 }
 
 export function verifyFundingDeposit(
@@ -481,6 +748,47 @@ export function verifyFundingReversal(
 
   return registry
     .verifyReversal(
+      receipt
+    );
+}
+
+
+export function verifyFundingHold(
+  receipt,
+  registry
+) {
+  if (
+    !registry ||
+    typeof registry.verifyHold !==
+      "function"
+  ) {
+    throw new TypeError(
+      "funding source registry is required"
+    );
+  }
+
+  return registry.verifyHold(
+    receipt
+  );
+}
+
+export function verifyFundingHoldResolution(
+  receipt,
+  registry
+) {
+  if (
+    !registry ||
+    typeof registry
+      .verifyHoldResolution !==
+      "function"
+  ) {
+    throw new TypeError(
+      "funding source registry is required"
+    );
+  }
+
+  return registry
+    .verifyHoldResolution(
       receipt
     );
 }
