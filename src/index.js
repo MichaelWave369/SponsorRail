@@ -62,3 +62,8 @@ export {
   createFundingSourceKeyPair,
   verifyFundingDeposit
 } from "./funding.js";
+
+export {
+  StripeCheckoutFundingAdapter,
+  verifyStripeWebhookSignature
+} from "./funding/stripe-checkout.js";

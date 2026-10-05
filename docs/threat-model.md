@@ -302,3 +302,42 @@ Mitigation: v0.13 explicitly reports pool-level provenance only. Per-task lot ac
 Threat: a compromised trusted source key mints fraudulent credits.
 
 Mitigation boundary: source-key rotation, revocation history, hardware-backed signing, and external settlement reconciliation remain future production hardening.
+
+
+## Stripe adapter threats added in v0.14
+
+### Forged webhook
+
+Threat: an attacker posts a fake paid Checkout Session.
+
+Mitigation: the adapter verifies the Stripe webhook signature against the exact raw request body and enforces timestamp tolerance before parsing or minting SponsorRail credits.
+
+### Webhook replay
+
+Threat: Stripe retries an event or multiple success events describe the same Checkout Session.
+
+Mitigation: the Checkout Session ID deterministically becomes the SponsorRail deposit ID and external reference. The v0.13 ledger applies that funding identity once.
+
+### Metadata inflation
+
+Threat: arbitrary Checkout metadata claims more SponsorRail credits than were actually paid.
+
+Mitigation: credit quantity is computed from signed `amount_total` and configured currency conversion. Metadata is not a credit source.
+
+### Campaign redirection
+
+Threat: payment metadata redirects funds into another campaign.
+
+Mitigation: each adapter instance is bound to a configured SponsorRail campaign ID.
+
+### Test/live confusion
+
+Threat: test-mode webhook events mint production campaign credits or vice versa.
+
+Mitigation: the adapter defaults to `requiredLivemode=false`. Live mode must be explicitly enabled.
+
+### Unbounded conversion
+
+Threat: a configuration error maps a payment to an extreme number of credits.
+
+Mitigation: rates must be positive integers and operators can set `maxCreditsPerDeposit`.

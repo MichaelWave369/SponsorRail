@@ -110,3 +110,31 @@ SponsorRail verifies an adapter's signed statement that credits should be added.
 The protocol also does not yet trace individual spend to specific deposit lots. Credits inside a campaign pool remain fungible.
 
 A future Stripe/payment adapter can sit above this contract rather than modifying it.
+
+
+## First external adapter: Stripe Checkout
+
+v0.14 adds a Stripe Checkout funding adapter above the generic signed funding-source contract.
+
+The adapter does not change the deposit ledger. Its job is narrower:
+
+1. verify Stripe's webhook evidence
+2. validate a paid Checkout Session
+3. convert the signed payment amount into SponsorRail credits under an operator-configured policy
+4. issue the normal SponsorRail signed funding deposit
+5. optionally pass that deposit directly to the SQLite funding ledger
+
+The destination campaign is configured on the adapter rather than read from arbitrary Checkout metadata.
+
+The credit amount is derived from Stripe's `amount_total` and currency. Metadata cannot override the funded amount.
+
+### Deterministic payment identity
+
+Each Checkout Session maps to:
+
+```text
+depositId = stripe-checkout:<session-id>
+externalReference = stripe-checkout:<session-id>
+```
+
+This makes webhook retry idempotency line up with SponsorRail deposit idempotency.

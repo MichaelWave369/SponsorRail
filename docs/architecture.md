@@ -210,3 +210,35 @@ Funding sources are operator-trusted by public key, analogous to compute provide
 The generic protocol does not depend on Stripe, bank rails, cloud credits, or any single payment processor. Those systems can be adapters that issue SponsorRail funding-deposit receipts only after their own settlement rules are satisfied.
 
 Funding-source receipts contain coarse funding metadata only and never enter model context.
+
+
+## Stripe adapter boundary
+
+v0.14 implements the first external funding adapter.
+
+```text
+Stripe Checkout
+      |
+      | signed webhook
+      v
+StripeCheckoutFundingAdapter
+      |
+      | validated paid amount
+      v
+SignedFundingSource
+      |
+      | SponsorRail Ed25519 deposit
+      v
+FundingSourceRegistry
+      |
+      v
+SQLite funding_deposits
+```
+
+Stripe's webhook secret authenticates the Stripe-to-adapter boundary.
+
+SponsorRail's funding-source Ed25519 key authenticates the adapter-to-SponsorRail boundary.
+
+Those are deliberately separate credentials and trust domains.
+
+The adapter does not need the model prompt, repository context, provider identity, or model output.
