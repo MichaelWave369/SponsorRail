@@ -2043,15 +2043,35 @@ WHERE original_deposit_id = ?
             prior.reversed
           );
 
+        const activeHolds =
+          this.#db
+            .prepare(`
+SELECT COALESCE(SUM(credits), 0) AS held
+FROM funding_holds
+WHERE original_deposit_id = ?
+  AND status = 'active'
+`)
+            .get(
+              String(
+                receipt.originalDepositId
+              )
+            );
+
+        const activeHeldCredits =
+          Number(
+            activeHolds.held
+          );
+
         if (
           priorReversed +
+            activeHeldCredits +
             receipt.credits >
           Number(
             deposit.credits
           )
         ) {
           throw new Error(
-            "funding reversal exceeds remaining deposit credits"
+            "funding reversal exceeds unheld deposit credits"
           );
         }
 
